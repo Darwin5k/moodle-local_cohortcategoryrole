@@ -51,8 +51,9 @@ class edit extends moodleform {
     protected function definition(): void {
         $mform = $this->_form;
 
+        // Autocomplete rather than select: sites using this plugin tend to have many cohorts.
         $mform->addElement(
-            'select',
+            'autocomplete',
             'cohortid',
             get_string('cohort', 'local_cohortcategoryrole'),
             self::get_cohort_options()
@@ -60,7 +61,7 @@ class edit extends moodleform {
         $mform->addRule('cohortid', null, 'required', null, 'client');
 
         $mform->addElement(
-            'select',
+            'autocomplete',
             'categoryid',
             get_string('category', 'local_cohortcategoryrole'),
             core_course_category::make_categories_list()

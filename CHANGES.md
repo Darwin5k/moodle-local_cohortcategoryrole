@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0 (2026-09-17)
+
+### Added
+
+- **Configuration checks** panel on the admin screen. Every way this plugin can be misconfigured
+  fails silently, so the checks look for them directly: the default allow still being in place on
+  Authenticated user or Guest, a `Prohibit` anywhere on the capability, the reconcile task being
+  disabled or cron not running, a mapped role that mass-enrols its holders, a cohort able to grant
+  access outside its own area, and a mapped category that cannot be browsed to.
+- `db/uninstall.php`, releasing every role assignment the plugin created. Core's
+  `uninstall_plugin()` never touches `role_assignments`, so uninstalling previously left every
+  mapped user holding their category role permanently.
+- `mapping_created` and `mapping_deleted` events, so changes to who can see what appear in the site
+  log — including deletions that cascade from a removed cohort, role or category.
+
+### Changed
+
+- Cohort and category pickers are now searchable autocompletes rather than plain selects, for sites
+  with many cohorts.
+- The static baseline notice is replaced by the checks panel, which reports the same problem only
+  when it actually applies, and names the role responsible.
+
 ## 0.1.0 (2026-09-16)
 
 Initial release. Requires Moodle 5.1.

@@ -26,6 +26,7 @@ require(__DIR__ . '/../../config.php');
 require_once($CFG->libdir . '/adminlib.php');
 
 use core\output\notification;
+use local_cohortcategoryrole\local\diagnostics;
 use local_cohortcategoryrole\local\sync;
 
 admin_externalpage_setup('local_cohortcategoryrole');
@@ -92,7 +93,18 @@ foreach (sync::get_mappings() as $mapping) {
 
 echo $OUTPUT->header();
 echo $OUTPUT->heading(get_string('mappings', 'local_cohortcategoryrole'));
-echo $OUTPUT->notification(get_string('baselinenotice', 'local_cohortcategoryrole'), notification::NOTIFY_INFO);
+echo $OUTPUT->heading(get_string('checksheading', 'local_cohortcategoryrole'), 3);
+
+$notificationtypes = [
+    diagnostics::OK => notification::NOTIFY_SUCCESS,
+    diagnostics::INFO => notification::NOTIFY_INFO,
+    diagnostics::WARNING => notification::NOTIFY_WARNING,
+    diagnostics::ERROR => notification::NOTIFY_ERROR,
+];
+
+foreach (diagnostics::run() as $check) {
+    echo $OUTPUT->notification($check->message, $notificationtypes[$check->level]);
+}
 
 if ($table->data) {
     echo html_writer::table($table);

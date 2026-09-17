@@ -25,7 +25,10 @@
 namespace local_cohortcategoryrole\local;
 
 use context_coursecat;
+use context_system;
 use core\task\manager;
+use local_cohortcategoryrole\event\mapping_created;
+use local_cohortcategoryrole\event\mapping_deleted;
 use local_cohortcategoryrole\task\sync_mapping;
 use stdClass;
 
@@ -96,6 +99,16 @@ class sync {
 
         self::synchronise($mapping);
 
+        mapping_created::create([
+            'objectid' => $mapping->id,
+            'context' => context_system::instance(),
+            'other' => [
+                'cohortid' => $cohortid,
+                'categoryid' => $categoryid,
+                'roleid' => $roleid,
+            ],
+        ])->trigger();
+
         return $mapping;
     }
 
@@ -112,8 +125,21 @@ class sync {
             return;
         }
 
-        self::unsynchronise($mapping);
+        $unassigned = self::unsynchronise($mapping);
         $DB->delete_records(self::TABLE, ['id' => $mapping->id]);
+
+        $event = mapping_deleted::create([
+            'objectid' => $mapping->id,
+            'context' => context_system::instance(),
+            'other' => [
+                'cohortid' => (int) $mapping->cohortid,
+                'categoryid' => (int) $mapping->categoryid,
+                'roleid' => (int) $mapping->roleid,
+                'unassigned' => $unassigned,
+            ],
+        ]);
+        $event->add_record_snapshot(self::TABLE, $mapping);
+        $event->trigger();
     }
 
     /**

@@ -26,18 +26,28 @@ defined('MOODLE_INTERNAL') || die();
 
 $string['addmapping'] = 'Add mapping';
 $string['assignmentcount'] = 'Role assignments';
-$string['baselinenotice'] = 'This plugin only grants visibility. Because the capability moodle/category:viewcourselist is allowed by default for both the Authenticated user and Guest roles, everyone can already see every category, and a mapping will appear to do nothing. To make mappings meaningful, override moodle/category:viewcourselist to Prevent for both of those roles at the system context (or at the categories you want to restrict). Preventing it for Authenticated user alone still leaves every category visible to anonymous visitors wherever guest access is enabled. Never use Prohibit: it cannot be overridden at a deeper context and will break the grant.';
 $string['category'] = 'Course category';
 $string['category_help'] = 'Members of the cohort are assigned the selected role in this category context, which makes the category and its courses visible to them.
 
 Category browsing walks the tree from the top down, so a category is only reachable by browsing if every category above it is also visible to the user. If you map a subcategory whose parent is hidden, the courses will still be found by course search but the category will not appear in the category listing.';
+$string['checkbaselineallowed'] = 'The capability moodle/category:viewcourselist is still allowed for the "{$a}" role at system level, so everyone can already see every category and mappings will appear to do nothing. Override it to Prevent for that role.';
+$string['checkcohortscope'] = 'The cohort "{$a->cohort}" belongs to {$a->cohortcontext}, but is mapped to "{$a->category}", which sits outside it. Anyone who can add members to that cohort can therefore grant access to a category they do not administer. Move the cohort to the system context, or map it within its own area.';
+$string['checkcrondisabled'] = 'The "Reconcile cohort category role assignments" scheduled task is disabled. Role assignments will drift out of step with cohort membership and nothing will repair them.';
+$string['checkcronnever'] = 'The reconciliation task has not run yet. It is the mechanism that guarantees assignments match cohort membership, so confirm cron is running on this site.';
+$string['checkcronstale'] = 'The reconciliation task last ran {$a} ago. It is scheduled hourly, so cron may not be running. Until it runs, a missed event leaves stale access in place.';
+$string['checkmassenrol'] = 'The mapped role "{$a}" allows enrol/category:synchronised. Everyone holding it will be enrolled into every course in the mapped category, which is almost certainly not intended for a catalogue viewer role. Remove that capability from the role.';
+$string['checkok'] = 'No configuration problems detected.';
+$string['checkprohibit'] = 'The role "{$a->role}" has moodle/category:viewcourselist set to Prohibit at {$a->context}. Prohibit cannot be overridden at a deeper context, so it silently cancels every grant this plugin makes. Use Prevent instead.';
+$string['checksheading'] = 'Configuration checks';
+$string['checkunreachable'] = 'Members mapped to "{$a->category}" cannot browse to it, because its parent category "{$a->parent}" is not visible to them. The courses are still reachable by course search and direct link. Map the parent category too, or map at the level users browse from.';
 $string['cohort'] = 'Cohort';
 $string['cohortcategoryrole:manage'] = 'Manage cohort category role mappings';
 $string['confirmdelete'] = 'Are you sure you want to delete this mapping? The role assignments it created will be removed.';
 $string['deletemapping'] = 'Delete mapping';
-$string['editmapping'] = 'Edit mapping';
 $string['errorduplicate'] = 'A mapping for this cohort, category and role already exists.';
 $string['errorrolenotassignable'] = 'The selected role cannot be assigned in a course category context. Add Category to the role\'s assignable context types first.';
+$string['eventmappingcreated'] = 'Cohort category role mapping created';
+$string['eventmappingdeleted'] = 'Cohort category role mapping deleted';
 $string['mappingcreated'] = 'Mapping created.';
 $string['mappingdeleted'] = 'Mapping deleted.';
 $string['mappings'] = 'Cohort category role mappings';

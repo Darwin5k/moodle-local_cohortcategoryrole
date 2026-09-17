@@ -25,6 +25,8 @@
 namespace local_cohortcategoryrole;
 
 use context_coursecat;
+use local_cohortcategoryrole\event\mapping_created;
+use local_cohortcategoryrole\event\mapping_deleted;
 use local_cohortcategoryrole\local\sync;
 use PHPUnit\Framework\Attributes\CoversClass;
 
@@ -197,5 +199,78 @@ final class sync_test extends \advanced_testcase {
 
         $this->assertFalse($DB->record_exists(sync::TABLE, ['id' => $mapping->id]));
         $this->assertSame(0, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+    }
+
+    /**
+     * Creating and deleting a mapping is recorded in the site log.
+     *
+     * Changes to who can see what need an audit trail; without events there would be no record of
+     * who opened a category to an audience, or of access that vanished through a cascade.
+     *
+     * @return void
+     */
+    public function test_mapping_changes_are_logged(): void {
+        $this->resetAfterTest();
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        $user = $this->getDataGenerator()->create_user();
+        cohort_add_member($cohort->id, $user->id);
+
+        $sink = $this->redirectEvents();
+        $mapping = sync::create_mapping($cohort->id, $category->id, $roleid);
+        $events = $sink->get_events();
+        $sink->close();
+
+        $created = end($events);
+        $this->assertInstanceOf(mapping_created::class, $created);
+        $this->assertSame((int) $mapping->id, (int) $created->objectid);
+        $this->assertSame((int) $cohort->id, (int) $created->other['cohortid']);
+        $this->assertSame((int) $category->id, (int) $created->other['categoryid']);
+
+        $sink = $this->redirectEvents();
+        sync::delete_mapping((int) $mapping->id);
+        $events = $sink->get_events();
+        $sink->close();
+
+        $deleted = end($events);
+        $this->assertInstanceOf(mapping_deleted::class, $deleted);
+        $this->assertSame((int) $mapping->id, (int) $deleted->objectid);
+        $this->assertSame(1, (int) $deleted->other['unassigned']);
+    }
+
+    /**
+     * Uninstalling releases the plugin's assignments but leaves manual ones alone.
+     *
+     * Core's uninstall_plugin() never touches role_assignments, so without db/uninstall.php every
+     * mapped user would keep their category role permanently once the plugin was removed.
+     *
+     * @return void
+     */
+    public function test_uninstall_releases_only_its_own_assignments(): void {
+        global $CFG, $DB;
+
+        $this->resetAfterTest();
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        $member = $this->getDataGenerator()->create_user();
+        $manual = $this->getDataGenerator()->create_user();
+
+        cohort_add_member($cohort->id, $member->id);
+        $context = context_coursecat::instance($category->id);
+        role_assign($roleid, $manual->id, $context->id);
+
+        sync::create_mapping($cohort->id, $category->id, $roleid);
+        $this->assertSame(1, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+
+        require_once($CFG->dirroot . '/local/cohortcategoryrole/db/uninstall.php');
+        xmldb_local_cohortcategoryrole_uninstall();
+
+        $this->assertSame(0, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+        $this->assertTrue(user_has_role_assignment($manual->id, $roleid, $context->id));
+        $this->assertFalse(user_has_role_assignment($member->id, $roleid, $context->id));
     }
 }

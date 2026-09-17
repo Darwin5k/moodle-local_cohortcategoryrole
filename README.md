@@ -61,6 +61,49 @@ Moodle caches the set of categories visible to a user in a session cache with a 
 and role assignment does not invalidate it. After a sync, a logged-in user may keep seeing the old
 list for up to ten minutes. This is expected; it is not the plugin failing.
 
+## Things that can go wrong
+
+Every failure mode of this plugin is silent. Nothing errors; the site just grants or withholds the
+wrong access. The **Configuration checks** panel at the top of the plugin's admin screen looks for
+the ones that can be detected:
+
+| Problem | Effect | Detected |
+|---|---|---|
+| Default allow still in place on Authenticated user or Guest | Mappings appear to do nothing; everyone sees everything | ✅ warning |
+| `Prohibit` used instead of `Prevent` anywhere | Every grant is silently cancelled | ✅ error |
+| Reconcile task disabled, or cron not running | Drift accumulates and nothing repairs it | ✅ warning |
+| Mapped role allows `enrol/category:synchronised` | Everyone mapped is mass-enrolled into every course in the category | ✅ error |
+| Cohort scoped to one category, mapped to another | Whoever manages that cohort can grant access to an area they don't administer | ✅ warning |
+| Mapped subcategory under a hidden parent | Grant works, but users cannot browse to it | ✅ warning |
+
+Checks resolve against a real cohort member where user context matters, so they reflect actual
+permissions rather than a guess.
+
+### What the checks cannot catch
+
+**Editing the mapped role.** Adding a capability to your viewer role escalates every mapped user in
+every mapped category, instantly and site-wide. The role is shared by design — that is what makes
+one role enough for any number of cohorts — so treat changes to it as a change to every mapping at
+once. Only the `enrol/category:synchronised` case is detectable, because only that one has an
+unambiguous wrong answer.
+
+**Restoring a category from backup.** A restore creates a new category with a new id. Mappings point
+at the old id and will not follow. Re-create them against the restored category.
+
+**Very large cohorts.** Synchronisation loads the member id list for one mapping at a time. That is
+fine into the hundreds of thousands; beyond that, expect to chunk it.
+
+**Moving a category** is safe — context ids survive a move, so assignments follow it. But the move
+may put the category under a different parent, which can make it unbrowsable; the reachability check
+will report that after the move.
+
+## Uninstalling
+
+`db/uninstall.php` releases every role assignment the plugin created. This matters: core's
+`uninstall_plugin()` drops plugin tables and cleans up capability definitions, but it never touches
+`role_assignments`, so without this step every mapped user would keep their category role
+permanently with the mapping table gone. Assignments made by hand are left alone, as always.
+
 ## Design
 
 Declarative rather than event-driven. Desired state is the cross product of the mappings and
