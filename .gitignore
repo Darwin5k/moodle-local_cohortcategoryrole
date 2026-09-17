@@ -1,0 +1,11 @@
+# OS and editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Local scratch - demo seeds, teardown scripts, ad hoc checks
+/dev/
+_demo_*.php
