@@ -114,6 +114,46 @@ final class reconcile_test extends \advanced_testcase {
     }
 
     /**
+     * Reconciliation releases assignments no mapping owns, and leaves everything else alone.
+     *
+     * This is the safety net for a deferred deletion whose task never ran. Without it, stranded
+     * assignments would keep granting access with no mapping left to explain or revoke them.
+     *
+     * @return void
+     */
+    public function test_reconcile_releases_orphaned_assignments(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        $member = $this->getDataGenerator()->create_user();
+        $stranded = $this->getDataGenerator()->create_user();
+        $manual = $this->getDataGenerator()->create_user();
+
+        cohort_add_member($cohort->id, $member->id);
+        sync::create_mapping($cohort->id, $category->id, $roleid);
+        $context = context_coursecat::instance($category->id);
+
+        // An assignment tagged with this plugin whose mapping no longer exists.
+        role_assign($roleid, $stranded->id, $context->id, sync::COMPONENT, 999999);
+        // And one an administrator made by hand, which must survive regardless.
+        role_assign($roleid, $manual->id, $context->id);
+
+        $this->assertSame(1, sync::count_orphans());
+
+        $totals = sync::reconcile();
+
+        $this->assertSame(1, $totals['orphans']);
+        $this->assertSame(0, sync::count_orphans());
+        $this->assertFalse(user_has_role_assignment($stranded->id, $roleid, $context->id));
+        $this->assertTrue(user_has_role_assignment($member->id, $roleid, $context->id));
+        $this->assertTrue(user_has_role_assignment($manual->id, $roleid, $context->id));
+    }
+
+    /**
      * The scheduled task runs the reconciliation and reports what it did.
      *
      * @return void

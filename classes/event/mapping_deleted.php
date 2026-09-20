@@ -65,10 +65,15 @@ class mapping_deleted extends base {
      * @return string
      */
     public function get_description(): string {
-        return "The user with id '{$this->userid}' deleted the mapping of the cohort with id " .
+        $description = "The user with id '{$this->userid}' deleted the mapping of the cohort with id " .
             "'{$this->other['cohortid']}' to the role with id '{$this->other['roleid']}' " .
-            "in the course category with id '{$this->other['categoryid']}', releasing " .
-            "{$this->other['unassigned']} role assignment(s).";
+            "in the course category with id '{$this->other['categoryid']}'";
+
+        if (!empty($this->other['deferred'])) {
+            return $description . ', queueing the release of its role assignments.';
+        }
+
+        return $description . ", releasing {$this->other['unassigned']} role assignment(s).";
     }
 
     /**

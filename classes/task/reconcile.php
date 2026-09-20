@@ -57,10 +57,12 @@ class reconcile extends scheduled_task {
         $totals = sync::reconcile();
 
         mtrace(sprintf(
-            'local_cohortcategoryrole: reconciled %d mapping(s), %d assignment(s) added, %d removed.',
+            'local_cohortcategoryrole: reconciled %d mapping(s), %d assignment(s) added, %d removed, '
+                . '%d orphan(s) released.',
             $totals['mappings'],
             $totals['assigned'],
-            $totals['unassigned']
+            $totals['unassigned'],
+            $totals['orphans']
         ));
     }
 }

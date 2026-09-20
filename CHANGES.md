@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 (2026-09-20)
+
+### Fixed
+
+- **Large mappings no longer time out the request.** Assignments cost about 5 ms each, so granting
+  a 5,000-member cohort took 23 seconds inline and a 100,000-member one would take eight minutes —
+  past any web server's limit, leaving the grant half applied with no feedback. Mappings covering
+  more members than the new **Defer above this many rows** setting (default 500) are now applied by
+  the task queue: creating one takes 0.02 s instead of 23 s, and deleting one 0.01 s instead of
+  21 s. Smaller mappings stay inline so sites without working cron still function.
+
+### Added
+
+- Deleting a large mapping removes the mapping row immediately — so it stops granting at once and
+  cannot be re-applied — and releases its assignments through a new `release_assignments` task.
+- **Orphan sweep** in the reconcile task, releasing any assignment this plugin owns that no mapping
+  accounts for. This is what makes deferred deletion safe: a lost task cannot strand access.
+- A configuration check reporting orphaned assignments that persist, which means the queue is not
+  running and that access is still live.
+
 ## 0.2.0 (2026-09-17)
 
 ### Added

@@ -70,6 +70,7 @@ class diagnostics {
             self::check_reconcile_task(),
             self::check_mapped_roles(),
             self::check_cohort_scope(),
+            self::check_orphans(),
             self::check_reachability()
         );
 
@@ -235,6 +236,29 @@ class diagnostics {
         }
 
         return $results;
+    }
+
+    /**
+     * Reports role assignments this plugin owns that no mapping accounts for.
+     *
+     * Deleting a large mapping queues the release rather than doing it inline, so a few orphans
+     * shortly after a deletion are expected and the next reconciliation clears them. Orphans that
+     * persist mean the queue is not running, and the access they grant is still live.
+     *
+     * @return stdClass[]
+     */
+    protected static function check_orphans(): array {
+        $orphans = sync::count_orphans();
+
+        if (!$orphans) {
+            return [];
+        }
+
+        return [self::result(self::WARNING, get_string(
+            'checkorphans',
+            'local_cohortcategoryrole',
+            $orphans
+        ))];
     }
 
     /**

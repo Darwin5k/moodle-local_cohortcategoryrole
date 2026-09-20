@@ -29,6 +29,7 @@ use context_system;
 use core\task\manager;
 use local_cohortcategoryrole\event\mapping_created;
 use local_cohortcategoryrole\event\mapping_deleted;
+use local_cohortcategoryrole\task\release_assignments;
 use local_cohortcategoryrole\task\sync_mapping;
 use stdClass;
 
@@ -53,6 +54,24 @@ class sync {
 
     /** @var string Name of the mapping table. */
     public const TABLE = 'local_cohortcategoryrole';
+
+    /** @var int Members above which work is queued rather than done in the request. */
+    public const DEFAULT_DEFER_LIMIT = 500;
+
+    /**
+     * Returns the number of rows above which synchronisation is deferred to the task queue.
+     *
+     * Each assignment costs roughly five milliseconds, so a cohort of any real size would run past
+     * the web server's time limit if it were granted inline. Small mappings stay inline so that a
+     * site with broken cron still works for ordinary use.
+     *
+     * @return int
+     */
+    public static function get_defer_limit(): int {
+        $limit = (int) get_config('local_cohortcategoryrole', 'deferlimit');
+
+        return $limit > 0 ? $limit : self::DEFAULT_DEFER_LIMIT;
+    }
 
     /**
      * Returns a single mapping.
@@ -82,7 +101,8 @@ class sync {
      * @param int $cohortid Cohort id.
      * @param int $categoryid Course category id.
      * @param int $roleid Role id.
-     * @return stdClass The created mapping.
+     * @return stdClass The created mapping, with a transient ->deferred flag saying whether the
+     *                  grant was queued rather than applied immediately.
      */
     public static function create_mapping(int $cohortid, int $categoryid, int $roleid): stdClass {
         global $DB;
@@ -97,7 +117,16 @@ class sync {
         ];
         $mapping->id = $DB->insert_record(self::TABLE, $mapping);
 
-        self::synchronise($mapping);
+        // Granting a large cohort takes minutes, which would time out the administrator's request
+        // and leave the grant half applied with no feedback. Queue it instead.
+        $members = $DB->count_records('cohort_members', ['cohortid' => $cohortid]);
+        $mapping->deferred = $members > self::get_defer_limit();
+
+        if ($mapping->deferred) {
+            self::queue_sync((int) $mapping->id);
+        } else {
+            self::synchronise($mapping);
+        }
 
         mapping_created::create([
             'objectid' => $mapping->id,
@@ -116,17 +145,30 @@ class sync {
      * Removes a mapping along with every role assignment it created.
      *
      * @param int $id Mapping id.
-     * @return void
+     * @return bool True if the release was queued rather than done immediately.
      */
-    public static function delete_mapping(int $id): void {
+    public static function delete_mapping(int $id): bool {
         global $DB;
 
         if (!$mapping = $DB->get_record(self::TABLE, ['id' => $id])) {
-            return;
+            return false;
         }
 
-        $unassigned = self::unsynchronise($mapping);
-        $DB->delete_records(self::TABLE, ['id' => $mapping->id]);
+        $owned = count(self::get_assigned_userids($mapping));
+        $deferred = $owned > self::get_defer_limit();
+
+        if ($deferred) {
+            // Remove the mapping first so it stops granting and cannot be re-applied, then release
+            // the assignments in the background. They are addressed by role and item id, so the
+            // task does not need the mapping row - and the reconcile task's orphan sweep will
+            // release them anyway if the task never runs.
+            $DB->delete_records(self::TABLE, ['id' => $mapping->id]);
+            self::queue_release((int) $mapping->roleid, (int) $mapping->id);
+            $unassigned = 0;
+        } else {
+            $unassigned = self::unsynchronise($mapping);
+            $DB->delete_records(self::TABLE, ['id' => $mapping->id]);
+        }
 
         $event = mapping_deleted::create([
             'objectid' => $mapping->id,
@@ -136,10 +178,13 @@ class sync {
                 'categoryid' => (int) $mapping->categoryid,
                 'roleid' => (int) $mapping->roleid,
                 'unassigned' => $unassigned,
+                'deferred' => $deferred,
             ],
         ]);
         $event->add_record_snapshot(self::TABLE, $mapping);
         $event->trigger();
+
+        return $deferred;
     }
 
     /**
@@ -224,12 +269,12 @@ class sync {
     }
 
     /**
-     * Reconciles every mapping on the site.
+     * Reconciles every mapping on the site, and releases anything no mapping owns.
      *
-     * @return array ['assigned' => int, 'unassigned' => int, 'mappings' => int]
+     * @return array ['assigned' => int, 'unassigned' => int, 'mappings' => int, 'orphans' => int]
      */
     public static function reconcile(): array {
-        $totals = ['assigned' => 0, 'unassigned' => 0, 'mappings' => 0];
+        $totals = ['assigned' => 0, 'unassigned' => 0, 'mappings' => 0, 'orphans' => 0];
 
         foreach (self::get_mappings() as $mapping) {
             $result = self::synchronise($mapping);
@@ -238,7 +283,63 @@ class sync {
             $totals['mappings']++;
         }
 
+        $totals['orphans'] = self::release_orphans();
+
         return $totals;
+    }
+
+    /**
+     * Returns the SQL selecting assignments this plugin owns that no mapping accounts for.
+     *
+     * @return string
+     */
+    protected static function orphan_where(): string {
+        return "ra.component = :component
+                AND NOT EXISTS (SELECT 1 FROM {local_cohortcategoryrole} m WHERE m.id = ra.itemid)";
+    }
+
+    /**
+     * Counts role assignments tagged with this plugin that no mapping owns.
+     *
+     * @return int
+     */
+    public static function count_orphans(): int {
+        global $DB;
+
+        return (int) $DB->count_records_sql(
+            'SELECT COUNT(1) FROM {role_assignments} ra WHERE ' . self::orphan_where(),
+            ['component' => self::COMPONENT]
+        );
+    }
+
+    /**
+     * Releases role assignments this plugin owns that no mapping accounts for.
+     *
+     * Deleting a large mapping queues its release rather than doing it inline, so this is the
+     * safety net that makes that safe: if the queued task is lost, or any future bug strands
+     * assignments, the next reconciliation releases them. Nothing else can produce these rows,
+     * because only this plugin writes its own component name.
+     *
+     * @return int Number of assignments released.
+     */
+    public static function release_orphans(): int {
+        global $DB;
+
+        $itemids = $DB->get_fieldset_sql(
+            'SELECT DISTINCT ra.itemid FROM {role_assignments} ra WHERE ' . self::orphan_where(),
+            ['component' => self::COMPONENT]
+        );
+
+        $released = 0;
+        foreach ($itemids as $itemid) {
+            $released += $DB->count_records('role_assignments', [
+                'component' => self::COMPONENT,
+                'itemid' => $itemid,
+            ]);
+            role_unassign_all(['component' => self::COMPONENT, 'itemid' => $itemid]);
+        }
+
+        return $released;
     }
 
     /**
@@ -281,9 +382,36 @@ class sync {
      */
     public static function queue_sync_for_cohort(int $cohortid): void {
         foreach (self::get_mappings(['cohortid' => $cohortid]) as $mapping) {
-            $task = new sync_mapping();
-            $task->set_custom_data(['mappingid' => (int) $mapping->id]);
-            manager::queue_adhoc_task($task, true);
+            self::queue_sync((int) $mapping->id);
         }
+    }
+
+    /**
+     * Queues a synchronisation of one mapping.
+     *
+     * Queueing with the duplicate check means repeated calls collapse into a single pending task.
+     *
+     * @param int $mappingid Mapping id.
+     * @return void
+     */
+    public static function queue_sync(int $mappingid): void {
+        $task = new sync_mapping();
+        $task->set_custom_data(['mappingid' => $mappingid]);
+        manager::queue_adhoc_task($task, true);
+    }
+
+    /**
+     * Queues the release of the assignments belonging to a mapping that has already been removed.
+     *
+     * Addressed by role and item id rather than by mapping, because the mapping row is gone.
+     *
+     * @param int $roleid Role the assignments use.
+     * @param int $itemid The deleted mapping's id.
+     * @return void
+     */
+    public static function queue_release(int $roleid, int $itemid): void {
+        $task = new release_assignments();
+        $task->set_custom_data(['roleid' => $roleid, 'itemid' => $itemid]);
+        manager::queue_adhoc_task($task, true);
     }
 }

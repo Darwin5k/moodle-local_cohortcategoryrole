@@ -61,6 +61,41 @@ Moodle caches the set of categories visible to a user in a session cache with a 
 and role assignment does not invalidate it. After a sync, a logged-in user may keep seeing the old
 list for up to ten minutes. This is expected; it is not the plugin failing.
 
+## Behaviour at scale
+
+Each role assignment costs about 5 ms — that is core's `role_assign()`, which does an existence
+check, an insert, a user cache invalidation, a category enrolment cache purge and a logged event.
+Granting a 5,000-member cohort therefore takes around 23 seconds, and a 100,000-member one around
+eight minutes. Neither can happen inside an administrator's web request.
+
+So mappings covering more members than **Defer above this many rows** (default 500, under *Plugins →
+Local plugins*) are applied by the task queue instead. Creating one returns immediately and reports
+that the members will be granted on the next cron run. Deleting one removes the mapping **at once**,
+so it stops granting immediately and cannot be re-applied, and releases the existing assignments in
+the background.
+
+```
+5,000-member cohort      inline      deferred
+create mapping           23.5 s      0.02 s
+delete mapping           21.6 s      0.01 s
+```
+
+Smaller mappings stay inline, so a site whose cron is not running still works for ordinary use.
+
+Deleting a large mapping is therefore eventually consistent: the mapping stops granting instantly,
+but the role assignments it created persist until the queue catches up, normally under a minute.
+The reconcile task's **orphan sweep** is the backstop — it releases any assignment this plugin owns
+that no mapping accounts for, so a lost task cannot strand access permanently, and the checks panel
+reports orphans that persist.
+
+Steady state costs nothing worth measuring: a reconciliation with no work to do is **9 queries**
+regardless of cohort size, and incremental cost tracks the number of changes rather than the size of
+the cohort.
+
+Membership churn is cheap too. Measured against an identical unmapped cohort, this plugin adds
+**0.07 ms and one query** per membership change, and 2,000 rapid changes collapse into a single
+queued sync.
+
 ## Things that can go wrong
 
 Every failure mode of this plugin is silent. Nothing errors; the site just grants or withholds the

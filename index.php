@@ -41,7 +41,12 @@ if ($delete) {
 
     if ($confirm) {
         require_sesskey();
-        sync::delete_mapping((int) $mapping->id);
+        $owned = count(sync::get_assigned_userids($mapping));
+
+        if (sync::delete_mapping((int) $mapping->id)) {
+            redirect($baseurl, get_string('mappingdeleteddeferred', 'local_cohortcategoryrole', $owned));
+        }
+
         redirect($baseurl, get_string('mappingdeleted', 'local_cohortcategoryrole'));
     }
 

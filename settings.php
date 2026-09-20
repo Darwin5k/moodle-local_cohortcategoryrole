@@ -30,3 +30,19 @@ $ADMIN->add('accounts', new admin_externalpage(
     new moodle_url('/local/cohortcategoryrole/index.php'),
     'local/cohortcategoryrole:manage'
 ));
+
+if ($hassiteconfig) {
+    $settings = new admin_settingpage(
+        'local_cohortcategoryrole_settings',
+        get_string('pluginname', 'local_cohortcategoryrole')
+    );
+    $ADMIN->add('localplugins', $settings);
+
+    $settings->add(new admin_setting_configtext(
+        'local_cohortcategoryrole/deferlimit',
+        get_string('deferlimit', 'local_cohortcategoryrole'),
+        get_string('deferlimit_desc', 'local_cohortcategoryrole'),
+        \local_cohortcategoryrole\local\sync::DEFAULT_DEFER_LIMIT,
+        PARAM_INT
+    ));
+}

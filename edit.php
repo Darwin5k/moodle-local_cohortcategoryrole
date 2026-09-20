@@ -39,7 +39,13 @@ if ($mform->is_cancelled()) {
 }
 
 if ($data = $mform->get_data()) {
-    sync::create_mapping((int) $data->cohortid, (int) $data->categoryid, (int) $data->roleid);
+    $mapping = sync::create_mapping((int) $data->cohortid, (int) $data->categoryid, (int) $data->roleid);
+
+    if (!empty($mapping->deferred)) {
+        $members = $DB->count_records('cohort_members', ['cohortid' => $mapping->cohortid]);
+        redirect($indexurl, get_string('mappingcreateddeferred', 'local_cohortcategoryrole', $members));
+    }
+
     redirect($indexurl, get_string('mappingcreated', 'local_cohortcategoryrole'));
 }
 

@@ -202,6 +202,113 @@ final class sync_test extends \advanced_testcase {
     }
 
     /**
+     * Runs queued tasks of one class, swallowing their progress output.
+     *
+     * @param string $classname
+     * @return void
+     */
+    protected function run_tasks(string $classname): void {
+        ob_start();
+        $this->runAdhocTasks($classname);
+        ob_end_clean();
+    }
+
+    /**
+     * A cohort larger than the limit is granted by the task queue, not in the request.
+     *
+     * Each assignment costs several milliseconds, so granting a large cohort inline would run past
+     * the web server's time limit and leave the grant half applied with no feedback.
+     *
+     * @return void
+     */
+    public function test_large_mapping_is_deferred(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        set_config('deferlimit', 2, 'local_cohortcategoryrole');
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+
+        for ($i = 0; $i < 3; $i++) {
+            $user = $this->getDataGenerator()->create_user();
+            cohort_add_member($cohort->id, $user->id);
+        }
+
+        $mapping = sync::create_mapping($cohort->id, $category->id, $roleid);
+
+        $this->assertTrue($mapping->deferred);
+        $this->assertSame(0, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+
+        $this->run_tasks('\local_cohortcategoryrole\task\sync_mapping');
+
+        $this->assertSame(3, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+    }
+
+    /**
+     * A small cohort is still granted immediately, so a site without cron keeps working.
+     *
+     * @return void
+     */
+    public function test_small_mapping_is_applied_immediately(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        set_config('deferlimit', 100, 'local_cohortcategoryrole');
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        $user = $this->getDataGenerator()->create_user();
+        cohort_add_member($cohort->id, $user->id);
+
+        $mapping = sync::create_mapping($cohort->id, $category->id, $roleid);
+
+        $this->assertFalse($mapping->deferred);
+        $this->assertSame(1, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+    }
+
+    /**
+     * Deleting a large mapping stops it granting at once and releases in the background.
+     *
+     * @return void
+     */
+    public function test_large_delete_is_deferred(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+        set_config('deferlimit', 100, 'local_cohortcategoryrole');
+
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+
+        for ($i = 0; $i < 3; $i++) {
+            $user = $this->getDataGenerator()->create_user();
+            cohort_add_member($cohort->id, $user->id);
+        }
+
+        $mapping = sync::create_mapping($cohort->id, $category->id, $roleid);
+        $this->assertSame(3, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+
+        // Now make the same mapping count as large.
+        set_config('deferlimit', 2, 'local_cohortcategoryrole');
+        $deferred = sync::delete_mapping((int) $mapping->id);
+
+        $this->assertTrue($deferred);
+
+        // The mapping is gone immediately, so nothing can re-apply it.
+        $this->assertFalse($DB->record_exists(sync::TABLE, ['id' => $mapping->id]));
+        $this->assertSame(3, sync::count_orphans());
+
+        $this->run_tasks('\local_cohortcategoryrole\task\release_assignments');
+
+        $this->assertSame(0, $DB->count_records('role_assignments', ['component' => sync::COMPONENT]));
+        $this->assertSame(0, sync::count_orphans());
+    }
+
+    /**
      * Creating and deleting a mapping is recorded in the site log.
      *
      * Changes to who can see what need an audit trail; without events there would be no record of
