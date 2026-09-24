@@ -251,6 +251,54 @@ final class diagnostics_test extends \advanced_testcase {
     }
 
     /**
+     * Restores category visibility to the roles that manage categories.
+     *
+     * No core role allows the capability explicitly - Manager, Course creator and Teacher all
+     * inherited it from Authenticated user - so preventing it there takes it from them too. A
+     * correctly configured site has to give it back.
+     *
+     * @return void
+     */
+    protected function grant_visibility_to_managers(): void {
+        global $DB;
+
+        foreach (['manager', 'coursecreator', 'editingteacher'] as $shortname) {
+            $role = $DB->get_record('role', ['shortname' => $shortname], '*', MUST_EXIST);
+            assign_capability(
+                diagnostics::CAPABILITY,
+                CAP_ALLOW,
+                $role->id,
+                context_system::instance()->id,
+                true
+            );
+        }
+        accesslib_clear_all_caches_for_unit_testing();
+    }
+
+    /**
+     * A role that can manage categories but can no longer see them is reported.
+     *
+     * Every category management operation is gated behind category visibility, so such a role
+     * holds permissions its holders cannot actually use - silently.
+     *
+     * @return void
+     */
+    public function test_privileged_role_without_visibility_is_reported(): void {
+        $this->resetAfterTest();
+        $this->prevent_baseline();
+
+        $messages = $this->messages(diagnostics::run());
+
+        $this->assertStringContainsString('Manager', $messages);
+        $this->assertStringContainsString('moodle/category:viewcourselist', $messages);
+
+        // Giving the capability back clears the warning.
+        $this->grant_visibility_to_managers();
+
+        $this->assertStringNotContainsString('still appear to have', $this->messages(diagnostics::run()));
+    }
+
+    /**
      * A correctly configured site with a reachable mapping reports nothing alarming.
      *
      * @return void
@@ -258,6 +306,7 @@ final class diagnostics_test extends \advanced_testcase {
     public function test_healthy_configuration_reports_no_warnings(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
+        $this->grant_visibility_to_managers();
 
         $category = $this->getDataGenerator()->create_category();
         $user = $this->getDataGenerator()->create_user();

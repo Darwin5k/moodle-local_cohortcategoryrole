@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 (2026-09-24)
+
+### Security
+
+- The Prohibit configuration check embedded a role name straight from the database into a
+  notification. Notification templates render their message as raw HTML (`{{{ message }}}`), so a
+  role named with markup could inject it into the plugin's admin page. Role names now go through
+  `role_get_name()`, which applies `format_string()`. Administrator-only and low severity, but a
+  genuine injection path.
+
+### Added
+
+- **Check for privileged roles that can no longer see categories.** No core role allows
+  `moodle/category:viewcourselist` explicitly — Manager, Course creator and Teacher inherit it from
+  Authenticated user — and every category management operation is gated behind category visibility.
+  Applying the baseline therefore strips Managers and Course creators of the ability to create
+  courses, restore into categories or review their roles and cohorts, while the Permissions screen
+  still shows them holding those capabilities. The checks panel now names the affected roles.
+- `cli/reconcile.php` for administrators: forces a reconciliation, or prints the configuration
+  checks with `--checks`, without waiting for cron.
+- README section documenting what the baseline does to the rest of the site, including that
+  self-enrolment is blocked rather than merely hidden for courses in invisible categories.
+
+### Changed
+
+- The mapping list no longer runs two count queries per row. Counts come from two grouped queries
+  and the table is paged at 50, so the page costs the same with 500 mappings as with five.
+
 ## 0.3.0 (2026-09-20)
 
 ### Fixed

@@ -69,6 +69,7 @@ class diagnostics {
             self::check_prohibit(),
             self::check_reconcile_task(),
             self::check_mapped_roles(),
+            self::check_privileged_roles(),
             self::check_cohort_scope(),
             self::check_orphans(),
             self::check_reachability()
@@ -141,7 +142,7 @@ class diagnostics {
 
         $results = [];
 
-        $sql = "SELECT rc.id, rc.contextid, r.name, r.shortname
+        $sql = "SELECT rc.id, rc.contextid, r.id AS roleid, r.name, r.shortname
                   FROM {role_capabilities} rc
                   JOIN {role} r ON r.id = rc.roleid
                  WHERE rc.capability = :cap AND rc.permission = :prohibit";
@@ -154,7 +155,13 @@ class diagnostics {
                 'checkprohibit',
                 'local_cohortcategoryrole',
                 (object) [
-                    'role' => $record->name ?: $record->shortname,
+                    // Notifications render their message as raw HTML, so a role name must never
+                    // reach one straight from the database. role_get_name() applies format_string.
+                    'role' => role_get_name((object) [
+                        'id' => $record->roleid,
+                        'name' => $record->name,
+                        'shortname' => $record->shortname,
+                    ]),
                     'context' => $context ? $context->get_context_name(false) : '?',
                 ]
             ));
@@ -233,6 +240,93 @@ class diagnostics {
                     get_string('checkmassenrol', 'local_cohortcategoryrole', role_get_name($role))
                 );
             }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Warns when a role can manage categories but can no longer see them.
+     *
+     * Every category management operation in core_course_category - creating a course, restoring
+     * into a category, reviewing its roles, cohorts or filters, moving courses in or out - is
+     * gated behind is_uservisible(), which needs this capability. No core role grants it
+     * explicitly: Manager, Course creator and Teacher all inherit it from Authenticated user. So
+     * the moment the baseline prevents it there, those roles silently lose the ability to use
+     * permissions they still appear to hold. Only site administrators are unaffected, because
+     * doanything bypasses the check.
+     *
+     * @return stdClass[]
+     */
+    protected static function check_privileged_roles(): array {
+        global $DB;
+
+        // Nothing to warn about while the default allow is still in place.
+        $baselineprevented = false;
+        foreach (['user', 'guest'] as $shortname) {
+            if (!$role = $DB->get_record('role', ['shortname' => $shortname])) {
+                continue;
+            }
+            $permission = $DB->get_field('role_capabilities', 'permission', [
+                'roleid' => $role->id,
+                'capability' => self::CAPABILITY,
+                'contextid' => context_system::instance()->id,
+            ]);
+            if ((int) $permission === CAP_PREVENT) {
+                $baselineprevented = true;
+            }
+        }
+
+        if (!$baselineprevented) {
+            return [];
+        }
+
+        // Capabilities whose category level operations are gated behind category visibility.
+        $gated = [
+            'moodle/course:create',
+            'moodle/category:manage',
+            'moodle/restore:restorecourse',
+        ];
+
+        [$insql, $params] = $DB->get_in_or_equal($gated, SQL_PARAMS_NAMED, 'cap');
+        $params['allow'] = CAP_ALLOW;
+
+        $sql = "SELECT DISTINCT rc.roleid, rc.capability
+                  FROM {role_capabilities} rc
+                 WHERE rc.capability $insql AND rc.permission = :allow";
+
+        $results = [];
+        $reported = [];
+
+        foreach ($DB->get_recordset_sql($sql, $params) as $record) {
+            if (isset($reported[$record->roleid])) {
+                continue;
+            }
+
+            // Does the role itself allow the capability? If not, the baseline prevent is the only
+            // other source and the holder ends up without it.
+            $grants = $DB->record_exists('role_capabilities', [
+                'roleid' => $record->roleid,
+                'capability' => self::CAPABILITY,
+                'permission' => CAP_ALLOW,
+            ]);
+            if ($grants) {
+                continue;
+            }
+
+            if (!$role = $DB->get_record('role', ['id' => $record->roleid])) {
+                continue;
+            }
+            $reported[$record->roleid] = true;
+
+            $results[] = self::result(self::WARNING, get_string(
+                'checkprivilegedrole',
+                'local_cohortcategoryrole',
+                (object) [
+                    'role' => role_get_name($role),
+                    'capability' => $record->capability,
+                ]
+            ));
         }
 
         return $results;

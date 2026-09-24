@@ -37,6 +37,45 @@ To make mappings meaningful:
    mass-enrolled into every course in the category.
 4. Map cohort → category → Category viewer in this plugin.
 
+### What the baseline does to the rest of the site
+
+Preventing `moodle/category:viewcourselist` is not a small change. **No core role grants that
+capability explicitly** — Manager, Course creator, Teacher and Student all inherit it from
+Authenticated user. The moment you prevent it there, they lose it too. Only site administrators are
+unaffected, because `doanything` bypasses the check.
+
+That matters more than it sounds, because **every category management operation in
+`core_course_category` is gated behind being able to see the category**:
+
+```php
+public function can_create_course() {
+    return $this->is_uservisible() && has_capability('moodle/course:create', $this->get_context());
+}
+```
+
+The same pattern guards `can_edit()`, `can_review_roles()`, `can_review_cohorts()`,
+`can_review_permissions()`, `can_review_filters()`, `can_change_visibility()`,
+`can_move_courses_into()`, `can_move_courses_out_of()` and `can_restore_courses_into()`. Verified on
+5.1: with the baseline applied and nothing else changed, a Manager, Course creator and Teacher all
+reported **no** for seeing the category, creating a course in it, and restoring into it — while the
+Permissions screen still showed them holding those capabilities.
+
+**So after applying the baseline, explicitly allow `moodle/category:viewcourselist` on every role
+that administers categories** — Manager, Course creator, Teacher, and any custom management role.
+The configuration checks panel detects this and names the roles.
+
+Other consequences worth knowing:
+
+- **Self-enrolment is blocked, not merely hidden.** `/enrol/index.php` refuses users who cannot see
+  the course and are not already enrolled, so a direct enrolment link shared by a colleague will not
+  work for someone outside the audience. That is usually the point, but it surprises people.
+- **Already-enrolled users keep full access.** Course search skips the visibility check entirely for
+  a user's own courses, and My Courses is unaffected.
+- **Front page category and course listings** are built from the same API, so they follow the same
+  rules — a user outside every audience sees an empty catalogue.
+- **Report builder** honours the capability (`course_category` entity declares it as a required
+  capability), so category-based reports narrow per viewer.
+
 ### Site-wide Prevent, or per-category?
 
 A single Prevent in the role definition covers every category that exists now *and every category

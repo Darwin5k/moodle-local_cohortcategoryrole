@@ -33,6 +33,9 @@ admin_externalpage_setup('local_cohortcategoryrole');
 
 $delete = optional_param('delete', 0, PARAM_INT);
 $confirm = optional_param('confirm', 0, PARAM_BOOL);
+$page = optional_param('page', 0, PARAM_INT);
+
+$perpage = 50;
 
 $baseurl = new moodle_url('/local/cohortcategoryrole/index.php');
 
@@ -63,6 +66,23 @@ if ($delete) {
 
 $roles = role_fix_names(get_all_roles(), null, ROLENAME_ORIGINAL);
 
+$totalmappings = $DB->count_records(sync::TABLE);
+$mappings = $DB->get_records(sync::TABLE, null, 'id ASC', '*', $page * $perpage, $perpage);
+
+// Counts come from two grouped queries rather than two per row: a site using this plugin is
+// expected to have many mappings, and per-row counting would put hundreds of queries on the page.
+// Both are grouped by a unique column, so get_records_sql() cannot collapse rows here.
+$membercounts = $DB->get_records_sql(
+    'SELECT cohortid, COUNT(1) AS total FROM {cohort_members} GROUP BY cohortid'
+);
+$assignmentcounts = $DB->get_records_sql(
+    'SELECT itemid, COUNT(1) AS total FROM {role_assignments} WHERE component = :component GROUP BY itemid',
+    ['component' => sync::COMPONENT]
+);
+
+$cohortnames = $DB->get_records_menu('cohort', null, '', 'id, name');
+$categories = core_course_category::get_many(array_column($mappings, 'categoryid'));
+
 $table = new html_table();
 $table->head = [
     get_string('cohort', 'local_cohortcategoryrole'),
@@ -74,9 +94,9 @@ $table->head = [
 ];
 $table->attributes['class'] = 'generaltable';
 
-foreach (sync::get_mappings() as $mapping) {
-    $cohortname = $DB->get_field('cohort', 'name', ['id' => $mapping->cohortid]);
-    $category = core_course_category::get($mapping->categoryid, IGNORE_MISSING, true);
+foreach ($mappings as $mapping) {
+    $cohortname = $cohortnames[$mapping->cohortid] ?? null;
+    $category = $categories[$mapping->categoryid] ?? null;
 
     $deleteurl = new moodle_url($baseurl, ['delete' => $mapping->id]);
     $deleteicon = $OUTPUT->action_icon(
@@ -90,8 +110,8 @@ foreach (sync::get_mappings() as $mapping) {
         $cohortname ? format_string($cohortname) : '-',
         $category ? $category->get_formatted_name() : '-',
         isset($roles[$mapping->roleid]) ? $roles[$mapping->roleid]->localname : '-',
-        $DB->count_records('cohort_members', ['cohortid' => $mapping->cohortid]),
-        count(sync::get_assigned_userids($mapping)),
+        isset($membercounts[$mapping->cohortid]) ? $membercounts[$mapping->cohortid]->total : 0,
+        isset($assignmentcounts[$mapping->id]) ? $assignmentcounts[$mapping->id]->total : 0,
         $deleteicon,
     ];
 }
@@ -112,7 +132,9 @@ foreach (diagnostics::run() as $check) {
 }
 
 if ($table->data) {
+    echo $OUTPUT->paging_bar($totalmappings, $page, $perpage, $baseurl);
     echo html_writer::table($table);
+    echo $OUTPUT->paging_bar($totalmappings, $page, $perpage, $baseurl);
 } else {
     echo $OUTPUT->notification(get_string('nomappings', 'local_cohortcategoryrole'), notification::NOTIFY_INFO);
 }
