@@ -371,6 +371,82 @@ class sync {
     }
 
     /**
+     * Returns the course category a cohort belongs to, if it belongs to one.
+     *
+     * A cohort created inside a category is, by its own data, that category's audience. Nothing in
+     * core acts on that - the context only decides who may edit the cohort and where it may be used
+     * for enrolment - so this is a statement of intent that this plugin can choose to honour.
+     *
+     * @param int $cohortid Cohort id.
+     * @return int|null Category id, or null for a system level cohort.
+     */
+    public static function category_for_cohort(int $cohortid): ?int {
+        global $DB;
+
+        $contextid = $DB->get_field('cohort', 'contextid', ['id' => $cohortid]);
+        if (!$contextid) {
+            return null;
+        }
+
+        $context = \context::instance_by_id($contextid, IGNORE_MISSING);
+        if (!$context || $context->contextlevel != CONTEXT_COURSECAT) {
+            return null;
+        }
+
+        return (int) $context->instanceid;
+    }
+
+    /**
+     * Creates the mapping implied by a cohort's own context, if automatic mapping is enabled.
+     *
+     * Deliberately silent when the feature is off, when no default role is configured, or when the
+     * cohort is not in a category: creating an access grant as a side effect of someone adding a
+     * cohort is surprising enough that it must be asked for explicitly.
+     *
+     * @param int $cohortid Cohort id.
+     * @return stdClass|null The mapping created, or null if nothing was done.
+     */
+    public static function automap_cohort(int $cohortid): ?stdClass {
+        if (!get_config('local_cohortcategoryrole', 'automap')) {
+            return null;
+        }
+
+        $roleid = (int) get_config('local_cohortcategoryrole', 'automaprole');
+        if (!$roleid) {
+            return null;
+        }
+
+        $categoryid = self::category_for_cohort($cohortid);
+        if (!$categoryid) {
+            return null;
+        }
+
+        if (self::get_mappings(['cohortid' => $cohortid, 'categoryid' => $categoryid, 'roleid' => $roleid])) {
+            return null;
+        }
+
+        return self::create_mapping($cohortid, $categoryid, $roleid);
+    }
+
+    /**
+     * Returns the roles that may be assigned in a course category context.
+     *
+     * @return array Role id => role name.
+     */
+    public static function get_category_role_options(): array {
+        $assignable = get_roles_for_contextlevels(CONTEXT_COURSECAT);
+
+        $options = [];
+        foreach (role_fix_names(get_all_roles(), null, ROLENAME_ORIGINAL) as $role) {
+            if (in_array($role->id, $assignable)) {
+                $options[$role->id] = $role->localname;
+            }
+        }
+
+        return $options;
+    }
+
+    /**
      * Queues a low latency synchronisation for every mapping that uses the given cohort.
      *
      * Role assignment is deliberately not done inline in the event observers: a bulk membership

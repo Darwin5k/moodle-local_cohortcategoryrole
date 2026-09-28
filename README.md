@@ -100,6 +100,40 @@ Moodle caches the set of categories visible to a user in a session cache with a 
 and role assignment does not invalidate it. After a sync, a logged-in user may keep seeing the old
 list for up to ten minutes. This is expected; it is not the plugin failing.
 
+## Three ways to create a mapping
+
+A cohort's context and its mapping answer **different questions**. The context says *who may edit
+this audience*; the mapping says *what this audience can see*. Keeping them separate is what lets
+an audience maintained centrally open a category administered by someone else.
+
+| Cohort lives at | How it gets mapped |
+|---|---|
+| A course category | Automatically, if **Automatically map cohorts created in a category** is on |
+| System level | By hand, on this plugin's screen |
+| A category, but should grant a *different* category | By hand — and the checks panel will flag it, so the decision is deliberate |
+
+**Automatic mapping is off by default.** Creating an access grant as a side effect of someone
+adding a cohort is surprising unless you asked for it, and on a site already using category
+cohorts for enrolment sync, switching it on blind would open several categories at once. It is
+also **not retroactive** — enabling it maps nothing that already exists. The mapping list shows
+category cohorts that have no mapping, each with a one-click link to create one, so adopting it on
+an existing site is a series of deliberate choices rather than one irreversible tick.
+
+An automatic mapping can never trigger the delegation warning, because the category comes from the
+cohort's own context — there is no field for anyone to get wrong.
+
+### Hide your audience cohorts
+
+`cohort_get_available_cohorts()` offers a course every **visible** cohort from its context chain,
+and checks `moodle/cohort:view` against the cohort's own context rather than the course's. Verified
+on 5.1: an editing teacher in a course was offered both the visible system cohort and the visible
+category cohort, and neither hidden one — despite holding `moodle/cohort:view` in their course.
+
+So a visible audience cohort can be selected by **any teacher beneath it** and mass-enrolled into
+their course. Since enrolled users always see their own courses, that also sidesteps the catalogue
+restriction the mapping exists to create. Untick **Visible** on cohorts used as audiences; the
+checks panel warns about mapped cohorts that are visible.
+
 ## Behaviour at scale
 
 Each role assignment costs about 5 ms — that is core's `role_assign()`, which does an existence

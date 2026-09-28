@@ -24,6 +24,7 @@
 
 namespace local_cohortcategoryrole;
 
+use core\event\cohort_created;
 use core\event\cohort_deleted;
 use core\event\cohort_member_added;
 use core\event\cohort_member_removed;
@@ -42,6 +43,16 @@ use local_cohortcategoryrole\local\sync;
  * @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 class observer {
+    /**
+     * Maps a new cohort to its own category, when automatic mapping is switched on.
+     *
+     * @param cohort_created $event The event.
+     * @return void
+     */
+    public static function cohort_created(cohort_created $event): void {
+        sync::automap_cohort((int) $event->objectid);
+    }
+
     /**
      * Queues a synchronisation when a user joins a cohort.
      *

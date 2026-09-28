@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 (2026-09-28)
+
+### Added
+
+- **Automatically map cohorts created in a category** (setting, off by default). A cohort created
+  inside a category already states which audience it belongs to; with this on, creating the cohort
+  is the whole configuration. Not retroactive, and only ever maps a cohort to its own category, so
+  an automatic mapping can never produce the delegation mismatch the checks panel warns about.
+- **Role for automatic mappings** setting, listing the roles assignable in a category context.
+- Check for **visible mapped cohorts**. A visible cohort can be selected for cohort sync by any
+  teacher beneath its context and mass-enrolled into their course, which also sidesteps the
+  catalogue restriction, since enrolled users always see their own courses.
+- **Category cohorts without a mapping** panel on the mapping list, each with a one-click link to
+  create the mapping — so adopting automatic mapping on an existing site is a series of deliberate
+  choices rather than one irreversible tick.
+- Quick links to Cohorts, Define roles and the plugin's own settings.
+
+### Changed
+
+- The mapping list now shows, for every mapping, which context the cohort belongs to, whether the
+  cohort is visible, and a badge when the cohort is mapped outside its own category. Cohort,
+  category and role names link to the screens that manage them.
+- The role option list is now shared between the form and the settings page rather than duplicated.
+
 ## 0.4.0 (2026-09-24)
 
 ### Security

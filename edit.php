@@ -32,7 +32,20 @@ admin_externalpage_setup('local_cohortcategoryrole');
 
 $indexurl = new moodle_url('/local/cohortcategoryrole/index.php');
 
+// Optional prefill, so the mapping list can offer a one-click route for a cohort that already
+// states which category it belongs to.
+$cohortid = optional_param('cohortid', 0, PARAM_INT);
+$categoryid = optional_param('categoryid', 0, PARAM_INT);
+
 $mform = new edit_form(new moodle_url('/local/cohortcategoryrole/edit.php'));
+
+if ($cohortid || $categoryid) {
+    $mform->set_data([
+        'cohortid' => $cohortid,
+        'categoryid' => $categoryid,
+        'roleid' => (int) get_config('local_cohortcategoryrole', 'automaprole'),
+    ]);
+}
 
 if ($mform->is_cancelled()) {
     redirect($indexurl);

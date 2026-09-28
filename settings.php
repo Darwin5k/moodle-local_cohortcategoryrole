@@ -38,11 +38,35 @@ if ($hassiteconfig) {
     );
     $ADMIN->add('localplugins', $settings);
 
-    $settings->add(new admin_setting_configtext(
-        'local_cohortcategoryrole/deferlimit',
-        get_string('deferlimit', 'local_cohortcategoryrole'),
-        get_string('deferlimit_desc', 'local_cohortcategoryrole'),
-        \local_cohortcategoryrole\local\sync::DEFAULT_DEFER_LIMIT,
-        PARAM_INT
-    ));
+    // Only build the role list when the page is actually being rendered - settings.php is also
+    // parsed during upgrades, where these queries would be wasted work.
+    if ($ADMIN->fulltree) {
+        $settings->add(new admin_setting_configcheckbox(
+            'local_cohortcategoryrole/automap',
+            get_string('automap', 'local_cohortcategoryrole'),
+            get_string('automap_desc', 'local_cohortcategoryrole'),
+            0
+        ));
+
+        $roleoptions = [0 => get_string('choosedots')];
+        foreach (\local_cohortcategoryrole\local\sync::get_category_role_options() as $id => $name) {
+            $roleoptions[$id] = $name;
+        }
+
+        $settings->add(new admin_setting_configselect(
+            'local_cohortcategoryrole/automaprole',
+            get_string('automaprole', 'local_cohortcategoryrole'),
+            get_string('automaprole_desc', 'local_cohortcategoryrole'),
+            0,
+            $roleoptions
+        ));
+
+        $settings->add(new admin_setting_configtext(
+            'local_cohortcategoryrole/deferlimit',
+            get_string('deferlimit', 'local_cohortcategoryrole'),
+            get_string('deferlimit_desc', 'local_cohortcategoryrole'),
+            \local_cohortcategoryrole\local\sync::DEFAULT_DEFER_LIMIT,
+            PARAM_INT
+        ));
+    }
 }

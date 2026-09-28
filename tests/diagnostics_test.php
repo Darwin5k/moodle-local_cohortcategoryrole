@@ -247,7 +247,8 @@ final class diagnostics_test extends \advanced_testcase {
         sync::delete_mappings(['cohortid' => $cohort->id]);
         sync::create_mapping($cohort->id, $owned->id, $roleid);
 
-        $this->assertStringNotContainsString('Local Audience', $this->messages(diagnostics::run()));
+        // Assert on the scope wording specifically: the cohort may be named by other checks.
+        $this->assertStringNotContainsString('sits outside it', $this->messages(diagnostics::run()));
     }
 
     /**
@@ -310,7 +311,9 @@ final class diagnostics_test extends \advanced_testcase {
 
         $category = $this->getDataGenerator()->create_category();
         $user = $this->getDataGenerator()->create_user();
-        $cohort = $this->getDataGenerator()->create_cohort();
+
+        // Hidden, so teachers cannot pick the audience up for cohort sync enrolment.
+        $cohort = $this->getDataGenerator()->create_cohort(['visible' => 0]);
         cohort_add_member($cohort->id, $user->id);
 
         $roleid = $this->getDataGenerator()->create_role();

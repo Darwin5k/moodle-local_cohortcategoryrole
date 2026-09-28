@@ -26,6 +26,10 @@ defined('MOODLE_INTERNAL') || die();
 
 $observers = [
     [
+        'eventname' => '\core\event\cohort_created',
+        'callback'  => '\local_cohortcategoryrole\observer::cohort_created',
+    ],
+    [
         'eventname' => '\core\event\cohort_member_added',
         'callback'  => '\local_cohortcategoryrole\observer::cohort_member_added',
     ],

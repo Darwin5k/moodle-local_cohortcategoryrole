@@ -73,7 +73,7 @@ class edit extends moodleform {
             'select',
             'roleid',
             get_string('role', 'local_cohortcategoryrole'),
-            self::get_role_options()
+            sync::get_category_role_options()
         );
         $mform->addRule('roleid', null, 'required', null, 'client');
 
@@ -123,28 +123,6 @@ class edit extends moodleform {
                 $label .= ' (' . $cohortcontext->get_context_name(false) . ')';
             }
             $options[$cohort->id] = $label;
-        }
-
-        return $options;
-    }
-
-    /**
-     * Returns the roles that may be assigned in a course category context.
-     *
-     * The specific category is not known until the form is submitted, so this lists every role
-     * whose assignable context types include Category. The chosen combination is checked again
-     * in validation.
-     *
-     * @return array Role id => role name.
-     */
-    protected static function get_role_options(): array {
-        $assignable = get_roles_for_contextlevels(CONTEXT_COURSECAT);
-
-        $options = [];
-        foreach (role_fix_names(get_all_roles(), null, ROLENAME_ORIGINAL) as $role) {
-            if (in_array($role->id, $assignable)) {
-                $options[$role->id] = $role->localname;
-            }
         }
 
         return $options;

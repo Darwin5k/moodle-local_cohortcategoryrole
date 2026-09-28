@@ -71,6 +71,7 @@ class diagnostics {
             self::check_mapped_roles(),
             self::check_privileged_roles(),
             self::check_cohort_scope(),
+            self::check_visible_cohorts(),
             self::check_orphans(),
             self::check_reachability()
         );
@@ -326,6 +327,43 @@ class diagnostics {
                     'role' => role_get_name($role),
                     'capability' => $record->capability,
                 ]
+            ));
+        }
+
+        return $results;
+    }
+
+    /**
+     * Warns when a mapped cohort is visible, and so usable by teachers for enrolment.
+     *
+     * cohort_get_available_cohorts() offers a course every visible cohort from its context chain,
+     * and checks moodle/cohort:view against the cohort's own context rather than the course's. So a
+     * visible audience cohort can be picked up by any teacher beneath it and mass-enrolled into
+     * their course - which is rarely what an audience built for catalogue visibility is for.
+     *
+     * @return stdClass[]
+     */
+    protected static function check_visible_cohorts(): array {
+        global $DB;
+
+        $results = [];
+        $seen = [];
+
+        foreach (sync::get_mappings() as $mapping) {
+            if (isset($seen[$mapping->cohortid])) {
+                continue;
+            }
+            $seen[$mapping->cohortid] = true;
+
+            $cohort = $DB->get_record('cohort', ['id' => $mapping->cohortid]);
+            if (!$cohort || !$cohort->visible) {
+                continue;
+            }
+
+            $results[] = self::result(self::WARNING, get_string(
+                'checkcohortvisible',
+                'local_cohortcategoryrole',
+                format_string($cohort->name)
             ));
         }
 
