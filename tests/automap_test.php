@@ -214,11 +214,13 @@ final class automap_test extends \advanced_testcase {
         $category = $this->getDataGenerator()->create_category(['name' => 'Owned Area']);
         $this->create_cohort_in(context_coursecat::instance($category->id)->id);
 
-        $messages = '';
-        foreach (local\diagnostics::run() as $check) {
-            $messages .= $check->message . "\n";
+        foreach (local\diagnostics::run() as $row) {
+            if ($row->id === 'cohortscope') {
+                $this->assertSame(local\diagnostics::OK, $row->state);
+                return;
+            }
         }
 
-        $this->assertStringNotContainsString('sits outside it', $messages);
+        $this->fail('The cohort scope check did not report.');
     }
 }

@@ -24,6 +24,10 @@
 
 defined('MOODLE_INTERNAL') || die();
 
+$string['actioncohorts'] = 'Manage cohorts';
+$string['actiondefineroles'] = 'Define roles';
+$string['actionmappings'] = 'Review mappings';
+$string['actionscheduledtasks'] = 'Scheduled tasks';
 $string['addmapping'] = 'Add mapping';
 $string['assignmentcount'] = 'Role assignments';
 $string['automap'] = 'Automatically map cohorts created in a category';
@@ -34,23 +38,58 @@ $string['category'] = 'Course category';
 $string['category_help'] = 'Members of the cohort are assigned the selected role in this category context, which makes the category and its courses visible to them.
 
 Category browsing walks the tree from the top down, so a category is only reachable by browsing if every category above it is also visible to the user. If you map a subcategory whose parent is hidden, the courses will still be found by course search but the category will not appear in the category listing.';
-$string['checkbaselineallowed'] = 'The capability moodle/category:viewcourselist is still allowed for the "{$a}" role at system level, so everyone can already see every category and mappings will appear to do nothing. Override it to Prevent for that role.';
-$string['checkcohortscope'] = 'The cohort "{$a->cohort}" belongs to {$a->cohortcontext}, but is mapped to "{$a->category}", which sits outside it. Anyone who can add members to that cohort can therefore grant access to a category they do not administer. Move the cohort to the system context, or map it within its own area.';
-$string['checkcohortvisible'] = 'The mapped cohort "{$a}" is visible, so any teacher in a course beneath its context can select it for cohort sync and enrol every member into their course. Audiences used for catalogue visibility are usually better hidden: edit the cohort and untick Visible. Only holders of moodle/cohort:view at the cohort\'s own context can then use it.';
-$string['checkcrondisabled'] = 'The "Reconcile cohort category role assignments" scheduled task is disabled. Role assignments will drift out of step with cohort membership and nothing will repair them.';
-$string['checkcronnever'] = 'The reconciliation task has not run yet. It is the mechanism that guarantees assignments match cohort membership, so confirm cron is running on this site.';
-$string['checkcronstale'] = 'The reconciliation task last ran {$a} ago. It is scheduled hourly, so cron may not be running. Until it runs, a missed event leaves stale access in place.';
-$string['checkmassenrol'] = 'The mapped role "{$a}" allows enrol/category:synchronised. Everyone holding it will be enrolled into every course in the mapped category, which is almost certainly not intended for a catalogue viewer role. Remove that capability from the role.';
-$string['checkok'] = 'No configuration problems detected.';
-$string['checkorphans'] = '{$a} role assignment(s) created by this plugin are not accounted for by any mapping. This is normal for a short while after deleting a large mapping, and the next reconciliation clears them. If the number persists, the task queue is not running and that access is still live.';
-$string['checkprivilegedrole'] = 'The role "{$a->role}" grants {$a->capability}, but does not allow moodle/category:viewcourselist. Every category management operation - creating a course, restoring into a category, reviewing its roles or cohorts - is gated behind being able to see the category, so holders of this role can no longer use a permission they still appear to have. No core role grants the capability explicitly; they all inherited it from Authenticated user. Allow moodle/category:viewcourselist on this role.';
-$string['checkprohibit'] = 'The role "{$a->role}" has moodle/category:viewcourselist set to Prohibit at {$a->context}. Prohibit cannot be overridden at a deeper context, so it silently cancels every grant this plugin makes. Use Prevent instead.';
-$string['checksheading'] = 'Configuration checks';
-$string['checkunreachable'] = 'Members mapped to "{$a->category}" cannot browse to it, because its parent category "{$a->parent}" is not visible to them. The courses are still reachable by course search and direct link. Map the parent category too, or map at the level users browse from.';
+$string['checkbaseline'] = 'Default category visibility';
+$string['checkbaseline_help'] = 'Core allows moodle/category:viewcourselist for both the Authenticated user and Guest archetypes, so out of the box everyone can see every category and a mapping grants access the user already had.
+
+Override it to Prevent on both roles. Preventing it on Authenticated user alone still leaves every category visible to anonymous visitors wherever guest access is enabled - a hole that is invisible while testing as a logged-in user.
+
+Never use Prohibit: it cannot be overridden at a deeper context and would cancel every grant this plugin makes.';
+$string['checkcohortscope'] = 'Cohort scope';
+$string['checkcohortscope_help'] = 'Cohorts can live in a category context, and anyone holding moodle/cohort:assign there can change their membership.
+
+If such a cohort is mapped to a category outside that subtree, the people who administer the cohort can hand out access to an area they do not administer. That is legitimate - an audience maintained centrally may well open a catalogue it does not own - but it should be a decision rather than an accident, which is why it is reported.
+
+Mappings created automatically from a cohort context can never appear here, because the category comes from the cohort itself.';
+$string['checkcohortvisibility'] = 'Audience cohort visibility';
+$string['checkcohortvisibility_help'] = 'A visible cohort is offered to every course beneath its context for cohort sync enrolment, and the capability check runs against the cohort\'s own context rather than the course\'s. So any teacher below it can select the audience and enrol every member into their course.
+
+Because enrolled users always see their own courses, that also sidesteps the catalogue restriction the mapping exists to create.
+
+Edit the cohort and untick Visible. Only holders of moodle/cohort:view at the cohort\'s own context can then use it.';
+$string['checkmanagement'] = 'Category management roles';
+$string['checkmanagement_help'] = 'No core role allows moodle/category:viewcourselist explicitly - Manager, Course creator, Teacher and Student all inherit it from Authenticated user. Preventing it there takes it from them too.
+
+That matters because every category management operation is gated behind being able to see the category: creating a course, restoring into it, moving courses in or out, and reviewing its roles, cohorts, permissions or filters. Holders of the roles listed here still appear to have those permissions on the Permissions screen but cannot use them.
+
+Only site administrators are unaffected, because doanything bypasses the check. Allow moodle/category:viewcourselist on each role listed.';
+$string['checkmappedroles'] = 'Mapped role safety';
+$string['checkmappedroles_help'] = 'A role allowing enrol/category:synchronised mass-enrols everyone holding it into every course in the category it is assigned in.
+
+That is almost never what a role intended to grant catalogue visibility should do. Remove the capability from the role, or map a different role.';
+$string['checkorphans'] = 'Orphaned assignments';
+$string['checkorphans_help'] = 'Role assignments created by this plugin that no mapping accounts for.
+
+A few are expected for a short while after deleting a large mapping, because the release runs in the background, and the next reconciliation clears them. A number that persists means the task queue is not running and the access those assignments grant is still live.';
+$string['checkprohibit'] = 'Prohibit overrides';
+$string['checkprohibit_help'] = 'Prohibit cannot be overridden at a deeper context, so a single one anywhere above a mapped category silently cancels the mapping for everyone it covers.
+
+Use Prevent instead. Prevent means this role does not grant the capability, and loses to another role that does. Prohibit means nobody may hold it, ever, and vetoes every role.';
+$string['checkreachability'] = 'Category reachability';
+$string['checkreachability_help'] = 'Category listings are built from the top down and stop at the first category the user cannot see, so a mapped subcategory under a hidden parent is granted but unreachable by browsing.
+
+The grant is real: the courses are still found by course search and by direct link. Map the parent category as well, or map at the level users browse from.';
+$string['checksheading'] = 'Status';
+$string['checktask'] = 'Reconciliation task';
+$string['checktask_help'] = 'The scheduled task is what guarantees role assignments match cohort membership. The event observers only reduce latency, so if the task stops running a missed event leaves stale access in place with nothing to repair it.
+
+It also releases orphaned assignments left by a deferred deletion, and applies mappings too large to have been granted in the request that created them.';
 $string['cohort'] = 'Cohort';
 $string['cohortcategoryrole:manage'] = 'Manage cohort category role mappings';
 $string['cohortcontext'] = 'Cohort belongs to';
 $string['cohortvisible'] = 'Cohort visible';
+$string['columncheck'] = 'Check';
+$string['columnresult'] = 'Result';
+$string['columnstate'] = 'State';
 $string['confirmdelete'] = 'Are you sure you want to delete this mapping? The role assignments it created will be removed.';
 $string['deferlimit'] = 'Defer above this many rows';
 $string['deferlimit_desc'] = 'Mappings covering more members than this are applied by the task queue instead of immediately, so that granting or releasing a large cohort cannot time out the request. Smaller mappings are applied straight away, which keeps the plugin usable on a site whose cron is not running.';
@@ -59,6 +98,12 @@ $string['errorduplicate'] = 'A mapping for this cohort, category and role alread
 $string['errorrolenotassignable'] = 'The selected role cannot be assigned in a course category context. Add Category to the role\'s assignable context types first.';
 $string['eventmappingcreated'] = 'Cohort category role mapping created';
 $string['eventmappingdeleted'] = 'Cohort category role mapping deleted';
+$string['filterany'] = 'Any';
+$string['filterapply'] = 'Apply';
+$string['filterclear'] = 'Clear filters';
+$string['filternoresults'] = 'No mappings match these filters.';
+$string['filtersearch'] = 'Search cohort or category';
+$string['managelinks'] = 'Related settings and pages';
 $string['mappingcreated'] = 'Mapping created.';
 $string['mappingcreateddeferred'] = 'Mapping created. Its {$a} members will be given the role on the next cron run.';
 $string['mappingdeleted'] = 'Mapping deleted.';
@@ -70,10 +115,31 @@ $string['pluginname'] = 'Cohort category role synchronisation';
 $string['privacy:metadata'] = 'The Cohort category role synchronisation plugin stores only the mapping between a cohort, a course category and a role. It stores no personal data of its own; the role assignments it creates are stored by the core role subsystem.';
 $string['reconciletask'] = 'Reconcile cohort category role assignments';
 $string['releasetask'] = 'Release cohort category role assignments';
+$string['resultallcansee'] = 'All management roles can see categories';
+$string['resultallhidden'] = 'All mapped cohorts hidden';
+$string['resultallinscope'] = 'All cohorts map within their own area';
+$string['resultallreachable'] = 'All mapped categories reachable';
+$string['resultbaselineprevented'] = 'Prevented for Authenticated user and Guest';
+$string['resultnonefound'] = 'None found';
+$string['resultnotapplicable'] = 'Not applicable';
+$string['resultorphancount'] = '{$a} assignment(s) with no mapping';
+$string['resultstillallowed'] = 'Still allowed for {$a}';
+$string['resulttaskdisabled'] = 'Disabled';
+$string['resulttasknever'] = 'Never run';
+$string['resulttaskran'] = 'Last ran {$a} ago';
+$string['returnto'] = 'Return to:';
 $string['role'] = 'Role';
 $string['scopeoutside'] = 'outside this category';
+$string['stateerror'] = 'Problem';
+$string['stateinfo'] = 'Note';
+$string['stateok'] = 'OK';
+$string['statewarning'] = 'Warning';
+$string['statussummary'] = '{$a} configuration check(s) need attention - see the Status tab.';
 $string['syncmappingtask'] = 'Synchronise a cohort category role mapping';
 $string['systemcohort'] = 'System';
+$string['tabmappings'] = 'Mappings';
+$string['tabsettings'] = 'Settings';
+$string['tabstatus'] = 'Status';
 $string['unmappedheading'] = 'Category cohorts without a mapping';
 $string['unmappedintro'] = 'These cohorts live inside a course category but grant nothing, because cohort membership alone does not affect what a user can see.';
 $string['unmappedmapthis'] = 'Create the mapping';

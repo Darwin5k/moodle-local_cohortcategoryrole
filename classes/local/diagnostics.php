@@ -29,14 +29,19 @@ use context_system;
 use core_course_category;
 use core_user;
 use local_cohortcategoryrole\task\reconcile;
+use moodle_url;
 use stdClass;
 
 /**
- * Detects the configuration mistakes that make this plugin fail quietly.
+ * Reports on the configuration this plugin depends on.
  *
- * Every problem this looks for produces no error and no log entry - the site simply grants or
- * withholds the wrong access. The checks exist so an administrator finds out from the plugin's
- * own screen rather than from a user who saw something they should not have.
+ * Every problem these look for produces no error and no log entry - the site simply grants or
+ * withholds the wrong access. So this is written as a report rather than a list of complaints:
+ * every check returns a row whatever its state, because knowing a thing was checked and passed is
+ * as useful as being told it failed.
+ *
+ * Each row carries a short result only. The reasoning lives in the matching {id}_help language
+ * string, shown behind a help icon, so the screen stays readable without losing the detail.
  *
  * @package    local_cohortcategoryrole
  * @copyright  2026 Robert Bellamy <darwin5k@gmail.com>
@@ -59,211 +64,88 @@ class diagnostics {
     public const CAPABILITY = 'moodle/category:viewcourselist';
 
     /**
-     * Runs every check and returns the results.
+     * Runs every check and returns one row each, in reading order.
      *
-     * @return stdClass[] Each with ->level and ->message.
+     * @return stdClass[] Each with ->id, ->state, ->summary and optionally ->actionurl/->actionlabel.
      */
     public static function run(): array {
-        $results = array_merge(
+        return [
             self::check_baseline(),
+            self::check_management_roles(),
             self::check_prohibit(),
-            self::check_reconcile_task(),
+            self::check_task(),
             self::check_mapped_roles(),
-            self::check_privileged_roles(),
+            self::check_cohort_visibility(),
             self::check_cohort_scope(),
-            self::check_visible_cohorts(),
             self::check_orphans(),
-            self::check_reachability()
-        );
-
-        if (!$results) {
-            $results[] = self::result(self::OK, get_string('checkok', 'local_cohortcategoryrole'));
-        }
-
-        return $results;
+            self::check_reachability(),
+        ];
     }
 
     /**
-     * Builds one result.
+     * Returns the worst state present in a set of results.
      *
-     * @param string $level One of the class constants.
-     * @param string $message Already translated message.
+     * @param stdClass[] $results
+     * @return string
+     */
+    public static function worst_state(array $results): string {
+        foreach ([self::ERROR, self::WARNING, self::INFO] as $state) {
+            foreach ($results as $result) {
+                if ($result->state === $state) {
+                    return $state;
+                }
+            }
+        }
+
+        return self::OK;
+    }
+
+    /**
+     * Builds one report row.
+     *
+     * @param string $id Check identifier, also the language string prefix.
+     * @param string $state One of the class constants.
+     * @param string $summary Short result, already translated.
+     * @param moodle_url|null $actionurl Where to go to deal with it.
+     * @param string|null $actionlabel Already translated link text.
      * @return stdClass
      */
-    protected static function result(string $level, string $message): stdClass {
-        return (object) ['level' => $level, 'message' => $message];
+    protected static function row(
+        string $id,
+        string $state,
+        string $summary,
+        ?moodle_url $actionurl = null,
+        ?string $actionlabel = null
+    ): stdClass {
+        return (object) [
+            'id' => $id,
+            'state' => $state,
+            'summary' => $summary,
+            'actionurl' => $actionurl,
+            'actionlabel' => $actionlabel,
+        ];
     }
 
     /**
-     * Warns when the site still grants category visibility to everybody.
+     * Shorthand for a plugin language string.
      *
-     * Core allows this capability for the user and guest archetypes, so until both are overridden
-     * a mapping grants access that the user already had, and appears to do nothing.
-     *
-     * @return stdClass[]
+     * @param string $identifier
+     * @param mixed $a
+     * @return string
      */
-    protected static function check_baseline(): array {
+    protected static function str(string $identifier, $a = null): string {
+        return get_string($identifier, 'local_cohortcategoryrole', $a);
+    }
+
+    /**
+     * Is the site-wide default allow still in place for either archetype role?
+     *
+     * @return stdClass
+     */
+    protected static function check_baseline(): stdClass {
         global $DB;
 
-        $results = [];
-        $systemid = context_system::instance()->id;
-
-        foreach (['user', 'guest'] as $shortname) {
-            if (!$role = $DB->get_record('role', ['shortname' => $shortname])) {
-                continue;
-            }
-
-            $permission = $DB->get_field('role_capabilities', 'permission', [
-                'roleid' => $role->id,
-                'capability' => self::CAPABILITY,
-                'contextid' => $systemid,
-            ]);
-
-            if ((int) $permission === CAP_ALLOW) {
-                $results[] = self::result(
-                    self::WARNING,
-                    get_string('checkbaselineallowed', 'local_cohortcategoryrole', role_get_name($role))
-                );
-            }
-        }
-
-        return $results;
-    }
-
-    /**
-     * Reports any Prohibit on the capability, which vetoes every grant this plugin makes.
-     *
-     * Prohibit cannot be overridden at a deeper context, so a single one anywhere above a mapped
-     * category silently disables the mapping for everyone it covers.
-     *
-     * @return stdClass[]
-     */
-    protected static function check_prohibit(): array {
-        global $DB;
-
-        $results = [];
-
-        $sql = "SELECT rc.id, rc.contextid, r.id AS roleid, r.name, r.shortname
-                  FROM {role_capabilities} rc
-                  JOIN {role} r ON r.id = rc.roleid
-                 WHERE rc.capability = :cap AND rc.permission = :prohibit";
-
-        $records = $DB->get_records_sql($sql, ['cap' => self::CAPABILITY, 'prohibit' => CAP_PROHIBIT]);
-
-        foreach ($records as $record) {
-            $context = \context::instance_by_id($record->contextid, IGNORE_MISSING);
-            $results[] = self::result(self::ERROR, get_string(
-                'checkprohibit',
-                'local_cohortcategoryrole',
-                (object) [
-                    // Notifications render their message as raw HTML, so a role name must never
-                    // reach one straight from the database. role_get_name() applies format_string.
-                    'role' => role_get_name((object) [
-                        'id' => $record->roleid,
-                        'name' => $record->name,
-                        'shortname' => $record->shortname,
-                    ]),
-                    'context' => $context ? $context->get_context_name(false) : '?',
-                ]
-            ));
-        }
-
-        return $results;
-    }
-
-    /**
-     * Warns when the task that guarantees correctness is disabled or is not running.
-     *
-     * The observers only reduce latency. If the reconcile task stops, drift accumulates silently.
-     *
-     * @return stdClass[]
-     */
-    protected static function check_reconcile_task(): array {
-        $task = \core\task\manager::get_scheduled_task(reconcile::class);
-        if (!$task) {
-            return [];
-        }
-
-        if ($task->get_disabled()) {
-            return [self::result(self::WARNING, get_string('checkcrondisabled', 'local_cohortcategoryrole'))];
-        }
-
-        $lastrun = $task->get_last_run_time();
-        if (!$lastrun) {
-            return [self::result(self::INFO, get_string('checkcronnever', 'local_cohortcategoryrole'))];
-        }
-
-        // The task is scheduled hourly; allow generous slack before complaining.
-        if ((time() - $lastrun) > 3 * HOURSECS) {
-            return [self::result(self::WARNING, get_string(
-                'checkcronstale',
-                'local_cohortcategoryrole',
-                format_time(time() - $lastrun)
-            ))];
-        }
-
-        return [];
-    }
-
-    /**
-     * Warns when a mapped role carries capabilities that make it unsuitable for this purpose.
-     *
-     * A role holding enrol/category:synchronised mass-enrols every holder into every course in the
-     * category, which is rarely what someone wanting a catalogue viewer intended.
-     *
-     * @return stdClass[]
-     */
-    protected static function check_mapped_roles(): array {
-        global $DB;
-
-        $results = [];
-        $seen = [];
-
-        foreach (sync::get_mappings() as $mapping) {
-            if (isset($seen[$mapping->roleid])) {
-                continue;
-            }
-            $seen[$mapping->roleid] = true;
-
-            if (!$role = $DB->get_record('role', ['id' => $mapping->roleid])) {
-                continue;
-            }
-
-            $dangerous = $DB->record_exists('role_capabilities', [
-                'roleid' => $role->id,
-                'capability' => 'enrol/category:synchronised',
-                'permission' => CAP_ALLOW,
-            ]);
-
-            if ($dangerous) {
-                $results[] = self::result(
-                    self::ERROR,
-                    get_string('checkmassenrol', 'local_cohortcategoryrole', role_get_name($role))
-                );
-            }
-        }
-
-        return $results;
-    }
-
-    /**
-     * Warns when a role can manage categories but can no longer see them.
-     *
-     * Every category management operation in core_course_category - creating a course, restoring
-     * into a category, reviewing its roles, cohorts or filters, moving courses in or out - is
-     * gated behind is_uservisible(), which needs this capability. No core role grants it
-     * explicitly: Manager, Course creator and Teacher all inherit it from Authenticated user. So
-     * the moment the baseline prevents it there, those roles silently lose the ability to use
-     * permissions they still appear to hold. Only site administrators are unaffected, because
-     * doanything bypasses the check.
-     *
-     * @return stdClass[]
-     */
-    protected static function check_privileged_roles(): array {
-        global $DB;
-
-        // Nothing to warn about while the default allow is still in place.
-        $baselineprevented = false;
+        $allowed = [];
         foreach (['user', 'guest'] as $shortname) {
             if (!$role = $DB->get_record('role', ['shortname' => $shortname])) {
                 continue;
@@ -273,39 +155,46 @@ class diagnostics {
                 'capability' => self::CAPABILITY,
                 'contextid' => context_system::instance()->id,
             ]);
-            if ((int) $permission === CAP_PREVENT) {
-                $baselineprevented = true;
+            if ((int) $permission === CAP_ALLOW) {
+                $allowed[] = role_get_name($role);
             }
         }
 
-        if (!$baselineprevented) {
-            return [];
+        if (!$allowed) {
+            return self::row('baseline', self::OK, self::str('resultbaselineprevented'));
         }
 
-        // Capabilities whose category level operations are gated behind category visibility.
-        $gated = [
-            'moodle/course:create',
-            'moodle/category:manage',
-            'moodle/restore:restorecourse',
-        ];
+        return self::row(
+            'baseline',
+            self::WARNING,
+            self::str('resultstillallowed', implode(', ', $allowed)),
+            new moodle_url('/admin/roles/manage.php'),
+            self::str('actiondefineroles')
+        );
+    }
 
+    /**
+     * Roles that administer categories but can no longer see them.
+     *
+     * @return stdClass
+     */
+    protected static function check_management_roles(): stdClass {
+        global $DB;
+
+        if (!self::baseline_is_prevented()) {
+            return self::row('management', self::OK, self::str('resultnotapplicable'));
+        }
+
+        $gated = ['moodle/course:create', 'moodle/category:manage', 'moodle/restore:restorecourse'];
         [$insql, $params] = $DB->get_in_or_equal($gated, SQL_PARAMS_NAMED, 'cap');
         $params['allow'] = CAP_ALLOW;
 
-        $sql = "SELECT DISTINCT rc.roleid, rc.capability
+        $sql = "SELECT DISTINCT rc.roleid
                   FROM {role_capabilities} rc
                  WHERE rc.capability $insql AND rc.permission = :allow";
 
-        $results = [];
-        $reported = [];
-
-        foreach ($DB->get_recordset_sql($sql, $params) as $record) {
-            if (isset($reported[$record->roleid])) {
-                continue;
-            }
-
-            // Does the role itself allow the capability? If not, the baseline prevent is the only
-            // other source and the holder ends up without it.
+        $affected = [];
+        foreach ($DB->get_records_sql($sql, $params) as $record) {
             $grants = $DB->record_exists('role_capabilities', [
                 'roleid' => $record->roleid,
                 'capability' => self::CAPABILITY,
@@ -314,100 +203,175 @@ class diagnostics {
             if ($grants) {
                 continue;
             }
-
-            if (!$role = $DB->get_record('role', ['id' => $record->roleid])) {
-                continue;
+            if ($role = $DB->get_record('role', ['id' => $record->roleid])) {
+                $affected[] = role_get_name($role);
             }
-            $reported[$record->roleid] = true;
-
-            $results[] = self::result(self::WARNING, get_string(
-                'checkprivilegedrole',
-                'local_cohortcategoryrole',
-                (object) [
-                    'role' => role_get_name($role),
-                    'capability' => $record->capability,
-                ]
-            ));
         }
 
-        return $results;
+        if (!$affected) {
+            return self::row('management', self::OK, self::str('resultallcansee'));
+        }
+
+        return self::row(
+            'management',
+            self::WARNING,
+            implode(', ', $affected),
+            new moodle_url('/admin/roles/manage.php'),
+            self::str('actiondefineroles')
+        );
     }
 
     /**
-     * Warns when a mapped cohort is visible, and so usable by teachers for enrolment.
+     * Any Prohibit on the capability cancels every grant this plugin makes.
      *
-     * cohort_get_available_cohorts() offers a course every visible cohort from its context chain,
-     * and checks moodle/cohort:view against the cohort's own context rather than the course's. So a
-     * visible audience cohort can be picked up by any teacher beneath it and mass-enrolled into
-     * their course - which is rarely what an audience built for catalogue visibility is for.
-     *
-     * @return stdClass[]
+     * @return stdClass
      */
-    protected static function check_visible_cohorts(): array {
+    protected static function check_prohibit(): stdClass {
         global $DB;
 
-        $results = [];
-        $seen = [];
+        $sql = "SELECT rc.id, rc.contextid, r.id AS roleid, r.name, r.shortname
+                  FROM {role_capabilities} rc
+                  JOIN {role} r ON r.id = rc.roleid
+                 WHERE rc.capability = :cap AND rc.permission = :prohibit";
 
-        foreach (sync::get_mappings() as $mapping) {
-            if (isset($seen[$mapping->cohortid])) {
-                continue;
-            }
-            $seen[$mapping->cohortid] = true;
-
-            $cohort = $DB->get_record('cohort', ['id' => $mapping->cohortid]);
-            if (!$cohort || !$cohort->visible) {
-                continue;
-            }
-
-            $results[] = self::result(self::WARNING, get_string(
-                'checkcohortvisible',
-                'local_cohortcategoryrole',
-                format_string($cohort->name)
-            ));
+        $found = [];
+        foreach ($DB->get_records_sql($sql, ['cap' => self::CAPABILITY, 'prohibit' => CAP_PROHIBIT]) as $record) {
+            $context = \context::instance_by_id($record->contextid, IGNORE_MISSING);
+            // Notifications and table cells render raw, so never pass a database value straight
+            // through. role_get_name() applies format_string.
+            $found[] = role_get_name((object) [
+                'id' => $record->roleid,
+                'name' => $record->name,
+                'shortname' => $record->shortname,
+            ]) . ' (' . ($context ? $context->get_context_name(false) : '?') . ')';
         }
 
-        return $results;
+        if (!$found) {
+            return self::row('prohibit', self::OK, self::str('resultnonefound'));
+        }
+
+        return self::row(
+            'prohibit',
+            self::ERROR,
+            implode(', ', $found),
+            new moodle_url('/admin/roles/manage.php'),
+            self::str('actiondefineroles')
+        );
     }
 
     /**
-     * Reports role assignments this plugin owns that no mapping accounts for.
+     * The scheduled task is the mechanism that guarantees correctness.
      *
-     * Deleting a large mapping queues the release rather than doing it inline, so a few orphans
-     * shortly after a deletion are expected and the next reconciliation clears them. Orphans that
-     * persist mean the queue is not running, and the access they grant is still live.
-     *
-     * @return stdClass[]
+     * @return stdClass
      */
-    protected static function check_orphans(): array {
-        $orphans = sync::count_orphans();
+    protected static function check_task(): stdClass {
+        $tasksurl = new moodle_url('/admin/tool/task/scheduledtasks.php');
 
-        if (!$orphans) {
-            return [];
+        $task = \core\task\manager::get_scheduled_task(reconcile::class);
+        if (!$task) {
+            return self::row('task', self::OK, self::str('resultnotapplicable'));
         }
 
-        return [self::result(self::WARNING, get_string(
-            'checkorphans',
-            'local_cohortcategoryrole',
-            $orphans
-        ))];
+        if ($task->get_disabled()) {
+            return self::row(
+                'task',
+                self::WARNING,
+                self::str('resulttaskdisabled'),
+                $tasksurl,
+                self::str('actionscheduledtasks')
+            );
+        }
+
+        $lastrun = $task->get_last_run_time();
+        if (!$lastrun) {
+            return self::row(
+                'task',
+                self::INFO,
+                self::str('resulttasknever'),
+                $tasksurl,
+                self::str('actionscheduledtasks')
+            );
+        }
+
+        $ago = self::str('resulttaskran', format_time(time() - $lastrun));
+
+        if ((time() - $lastrun) > 3 * HOURSECS) {
+            return self::row('task', self::WARNING, $ago, $tasksurl, self::str('actionscheduledtasks'));
+        }
+
+        return self::row('task', self::OK, $ago);
     }
 
     /**
-     * Warns when a cohort can grant access to a category outside its own area of control.
+     * A mapped role that mass-enrols its holders is almost never intended.
      *
-     * Cohorts can live in a category context, and anyone holding moodle/cohort:assign there can
-     * change their membership. If such a cohort is mapped to a category outside that subtree, the
-     * people who administer the cohort's own area can hand out access to an area they do not
-     * administer - a delegation leak that is invisible from both screens involved.
-     *
-     * @return stdClass[]
+     * @return stdClass
      */
-    protected static function check_cohort_scope(): array {
+    protected static function check_mapped_roles(): stdClass {
         global $DB;
 
-        $results = [];
+        $dangerous = [];
+        foreach (self::mapped_roleids() as $roleid) {
+            $mass = $DB->record_exists('role_capabilities', [
+                'roleid' => $roleid,
+                'capability' => 'enrol/category:synchronised',
+                'permission' => CAP_ALLOW,
+            ]);
+            if ($mass && $role = $DB->get_record('role', ['id' => $roleid])) {
+                $dangerous[] = role_get_name($role);
+            }
+        }
 
+        if (!$dangerous) {
+            return self::row('mappedroles', self::OK, self::str('resultnonefound'));
+        }
+
+        return self::row(
+            'mappedroles',
+            self::ERROR,
+            implode(', ', $dangerous),
+            new moodle_url('/admin/roles/manage.php'),
+            self::str('actiondefineroles')
+        );
+    }
+
+    /**
+     * A visible audience cohort can be picked up by any teacher beneath it.
+     *
+     * @return stdClass
+     */
+    protected static function check_cohort_visibility(): stdClass {
+        global $DB;
+
+        $visible = [];
+        foreach (self::mapped_cohorts() as $cohort) {
+            if ($cohort->visible) {
+                $visible[] = format_string($cohort->name);
+            }
+        }
+
+        if (!$visible) {
+            return self::row('cohortvisibility', self::OK, self::str('resultallhidden'));
+        }
+
+        return self::row(
+            'cohortvisibility',
+            self::WARNING,
+            implode(', ', $visible),
+            new moodle_url('/cohort/index.php'),
+            self::str('actioncohorts')
+        );
+    }
+
+    /**
+     * A cohort granting a category outside its own area is a delegation leak.
+     *
+     * @return stdClass
+     */
+    protected static function check_cohort_scope(): stdClass {
+        global $DB;
+
+        $outside = [];
         foreach (sync::get_mappings() as $mapping) {
             if (!$cohort = $DB->get_record('cohort', ['id' => $mapping->cohortid])) {
                 continue;
@@ -415,7 +379,6 @@ class diagnostics {
 
             $cohortcontext = \context::instance_by_id($cohort->contextid, IGNORE_MISSING);
             if (!$cohortcontext || $cohortcontext->contextlevel != CONTEXT_COURSECAT) {
-                // System level cohorts are managed site wide, so there is nothing narrower to leak.
                 continue;
             }
 
@@ -424,40 +387,57 @@ class diagnostics {
                 continue;
             }
 
-            // The mapped category must sit at or below the cohort's own context.
             $ancestors = explode('/', trim($categorycontext->path, '/'));
             if (in_array((string) $cohortcontext->id, $ancestors, true)) {
                 continue;
             }
 
-            $category = core_course_category::get($mapping->categoryid, IGNORE_MISSING, true);
-
-            $results[] = self::result(self::WARNING, get_string(
-                'checkcohortscope',
-                'local_cohortcategoryrole',
-                (object) [
-                    'cohort' => format_string($cohort->name),
-                    'cohortcontext' => $cohortcontext->get_context_name(false),
-                    'category' => $category ? $category->get_formatted_name() : '?',
-                ]
-            ));
+            $outside[] = format_string($cohort->name);
         }
 
-        return $results;
+        if (!$outside) {
+            return self::row('cohortscope', self::OK, self::str('resultallinscope'));
+        }
+
+        return self::row(
+            'cohortscope',
+            self::WARNING,
+            implode(', ', array_unique($outside)),
+            new moodle_url('/cohort/index.php'),
+            self::str('actioncohorts')
+        );
     }
 
     /**
-     * Warns when a mapped category cannot be browsed to because an ancestor is hidden.
+     * Assignments this plugin owns that no mapping accounts for.
      *
-     * The grant is real - course search and direct links work - but category listings are built
-     * from the top down and stop at the first category the user cannot see.
-     *
-     * @return stdClass[]
+     * @return stdClass
      */
-    protected static function check_reachability(): array {
+    protected static function check_orphans(): stdClass {
+        $orphans = sync::count_orphans();
+
+        if (!$orphans) {
+            return self::row('orphans', self::OK, self::str('resultnonefound'));
+        }
+
+        return self::row(
+            'orphans',
+            self::WARNING,
+            self::str('resultorphancount', $orphans),
+            new moodle_url('/admin/tool/task/scheduledtasks.php'),
+            self::str('actionscheduledtasks')
+        );
+    }
+
+    /**
+     * Mapped categories that members cannot browse to, because an ancestor is hidden.
+     *
+     * @return stdClass
+     */
+    protected static function check_reachability(): stdClass {
         global $DB;
 
-        $results = [];
+        $unreachable = [];
 
         foreach (sync::get_mappings() as $mapping) {
             $category = core_course_category::get($mapping->categoryid, IGNORE_MISSING, true);
@@ -465,7 +445,6 @@ class diagnostics {
                 continue;
             }
 
-            // Resolve against a real member, so this reflects actual permissions rather than a guess.
             $memberid = $DB->get_field_sql(
                 'SELECT MIN(userid) FROM {cohort_members} WHERE cohortid = :cohortid',
                 ['cohortid' => $mapping->cohortid]
@@ -480,24 +459,85 @@ class diagnostics {
                 if (!$parent) {
                     break;
                 }
-
                 $parentcontext = context_coursecat::instance($parent->id, IGNORE_MISSING);
                 if ($parentcontext && !has_capability(self::CAPABILITY, $parentcontext, $member)) {
-                    $results[] = self::result(self::WARNING, get_string(
-                        'checkunreachable',
-                        'local_cohortcategoryrole',
-                        (object) [
-                            'category' => $category->get_formatted_name(),
-                            'parent' => $parent->get_formatted_name(),
-                        ]
-                    ));
+                    $unreachable[] = $category->get_formatted_name();
                     break;
                 }
-
                 $parentid = $parent->parent;
             }
         }
 
-        return $results;
+        if (!$unreachable) {
+            return self::row('reachability', self::OK, self::str('resultallreachable'));
+        }
+
+        return self::row(
+            'reachability',
+            self::WARNING,
+            implode(', ', array_unique($unreachable)),
+            new moodle_url('/local/cohortcategoryrole/index.php'),
+            self::str('actionmappings')
+        );
+    }
+
+    /**
+     * Is the default allow removed from both archetype roles?
+     *
+     * @return bool
+     */
+    protected static function baseline_is_prevented(): bool {
+        global $DB;
+
+        foreach (['user', 'guest'] as $shortname) {
+            if (!$role = $DB->get_record('role', ['shortname' => $shortname])) {
+                continue;
+            }
+            $permission = $DB->get_field('role_capabilities', 'permission', [
+                'roleid' => $role->id,
+                'capability' => self::CAPABILITY,
+                'contextid' => context_system::instance()->id,
+            ]);
+            if ((int) $permission === CAP_PREVENT) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The distinct roles currently used by mappings.
+     *
+     * @return int[]
+     */
+    protected static function mapped_roleids(): array {
+        $roleids = [];
+        foreach (sync::get_mappings() as $mapping) {
+            $roleids[(int) $mapping->roleid] = true;
+        }
+
+        return array_keys($roleids);
+    }
+
+    /**
+     * The distinct cohorts currently used by mappings.
+     *
+     * @return stdClass[]
+     */
+    protected static function mapped_cohorts(): array {
+        global $DB;
+
+        $cohorts = [];
+        foreach (sync::get_mappings() as $mapping) {
+            if (isset($cohorts[$mapping->cohortid])) {
+                continue;
+            }
+            if ($cohort = $DB->get_record('cohort', ['id' => $mapping->cohortid])) {
+                $cohorts[$mapping->cohortid] = $cohort;
+            }
+        }
+
+        return $cohorts;
     }
 }

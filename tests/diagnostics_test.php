@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Tests for the configuration checks.
+ * Tests for the configuration report.
  *
  * @package    local_cohortcategoryrole
  * @copyright  2026 Robert Bellamy <darwin5k@gmail.com>
@@ -30,7 +30,7 @@ use local_cohortcategoryrole\local\sync;
 use PHPUnit\Framework\Attributes\CoversClass;
 
 /**
- * Tests for the configuration checks.
+ * Tests for the configuration report.
  *
  * @package    local_cohortcategoryrole
  * @copyright  2026 Robert Bellamy <darwin5k@gmail.com>
@@ -50,23 +50,33 @@ final class diagnostics_test extends \advanced_testcase {
     }
 
     /**
-     * Returns the concatenated messages from a check run, for substring assertions.
+     * Returns the state reported for one check.
      *
-     * @param array $results
+     * @param string $id
      * @return string
      */
-    protected function messages(array $results): string {
-        return implode("\n", array_column($results, 'message'));
+    protected function state(string $id): string {
+        foreach (diagnostics::run() as $row) {
+            if ($row->id === $id) {
+                return $row->state;
+            }
+        }
+        $this->fail('No check reported with id ' . $id);
     }
 
     /**
-     * Returns the levels present in a check run.
+     * Returns the summary reported for one check.
      *
-     * @param array $results
-     * @return array
+     * @param string $id
+     * @return string
      */
-    protected function levels(array $results): array {
-        return array_values(array_unique(array_column($results, 'level')));
+    protected function summary(string $id): string {
+        foreach (diagnostics::run() as $row) {
+            if ($row->id === $id) {
+                return $row->summary;
+            }
+        }
+        $this->fail('No check reported with id ' . $id);
     }
 
     /**
@@ -79,100 +89,215 @@ final class diagnostics_test extends \advanced_testcase {
 
         foreach (['user', 'guest'] as $shortname) {
             $role = $DB->get_record('role', ['shortname' => $shortname], '*', MUST_EXIST);
-            assign_capability(
-                diagnostics::CAPABILITY,
-                CAP_PREVENT,
-                $role->id,
-                context_system::instance()->id,
-                true
-            );
+            assign_capability(diagnostics::CAPABILITY, CAP_PREVENT, $role->id, context_system::instance()->id, true);
         }
         accesslib_clear_all_caches_for_unit_testing();
     }
 
     /**
-     * An untouched site warns that every category is still public.
+     * Gives category visibility back to the roles that manage categories.
+     *
+     * @return void
+     */
+    protected function grant_visibility_to_managers(): void {
+        global $DB;
+
+        foreach (['manager', 'coursecreator', 'editingteacher'] as $shortname) {
+            $role = $DB->get_record('role', ['shortname' => $shortname], '*', MUST_EXIST);
+            assign_capability(diagnostics::CAPABILITY, CAP_ALLOW, $role->id, context_system::instance()->id, true);
+        }
+        accesslib_clear_all_caches_for_unit_testing();
+    }
+
+    /**
+     * The report always returns a row per check, whatever the state.
+     *
+     * A report that only lists failures cannot distinguish "all clear" from "did not run".
+     *
+     * @return void
+     */
+    public function test_every_check_always_reports(): void {
+        $this->resetAfterTest();
+
+        $rows = diagnostics::run();
+        $ids = array_column($rows, 'id');
+
+        $this->assertContains('baseline', $ids);
+        $this->assertContains('management', $ids);
+        $this->assertContains('prohibit', $ids);
+        $this->assertContains('task', $ids);
+        $this->assertContains('mappedroles', $ids);
+        $this->assertContains('cohortvisibility', $ids);
+        $this->assertContains('cohortscope', $ids);
+        $this->assertContains('orphans', $ids);
+        $this->assertContains('reachability', $ids);
+        $this->assertSame(count($ids), count(array_unique($ids)));
+    }
+
+    /**
+     * Every check has a name and an explanation to show behind its help icon.
+     *
+     * These identifiers are built by concatenation at render time, so nothing else would notice
+     * one going missing until the page filled with "invalid string identifier".
+     *
+     * @return void
+     */
+    public function test_every_check_has_a_name_and_help_string(): void {
+        $this->resetAfterTest();
+
+        $manager = get_string_manager();
+        foreach (diagnostics::run() as $row) {
+            $this->assertTrue(
+                $manager->string_exists('check' . $row->id, 'local_cohortcategoryrole'),
+                'Missing name string for check ' . $row->id
+            );
+            $this->assertTrue(
+                $manager->string_exists('check' . $row->id . '_help', 'local_cohortcategoryrole'),
+                'Missing help string for check ' . $row->id
+            );
+            $this->assertTrue(
+                $manager->string_exists('state' . $row->state, 'local_cohortcategoryrole'),
+                'Missing state string for ' . $row->state
+            );
+        }
+    }
+
+    /**
+     * An untouched site reports that every category is still public.
      *
      * @return void
      */
     public function test_missing_baseline_is_reported(): void {
         $this->resetAfterTest();
 
-        $results = diagnostics::run();
-        $messages = $this->messages($results);
+        $this->assertSame(diagnostics::WARNING, $this->state('baseline'));
+        $this->assertStringContainsString('Authenticated user', $this->summary('baseline'));
+        $this->assertStringContainsString('Guest', $this->summary('baseline'));
 
-        $this->assertContains(diagnostics::WARNING, $this->levels($results));
-        $this->assertStringContainsString('Authenticated user', $messages);
-        $this->assertStringContainsString('Guest', $messages);
+        // While the default allow stands, the management roles are not affected yet.
+        $this->assertSame(diagnostics::OK, $this->state('management'));
     }
 
     /**
-     * Once both defaults are prevented, the baseline warnings go away.
+     * Preventing the default on both roles clears the baseline warning.
      *
      * @return void
      */
-    public function test_prevented_baseline_clears_the_warning(): void {
+    public function test_prevented_baseline_passes(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
 
-        $messages = $this->messages(diagnostics::run());
-
-        $this->assertStringNotContainsString('still allowed', $messages);
+        $this->assertSame(diagnostics::OK, $this->state('baseline'));
     }
 
     /**
-     * A Prohibit anywhere is reported as an error, because it cancels every grant.
+     * A role that manages categories but cannot see them is reported.
      *
      * @return void
      */
-    public function test_prohibit_is_reported_as_an_error(): void {
+    public function test_management_roles_losing_visibility_are_reported(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
 
-        $roleid = $this->getDataGenerator()->create_role(['shortname' => 'brokenrole']);
-        assign_capability(
-            diagnostics::CAPABILITY,
-            CAP_PROHIBIT,
-            $roleid,
-            context_system::instance()->id,
-            true
-        );
+        $this->assertSame(diagnostics::WARNING, $this->state('management'));
+        $this->assertStringContainsString('Manager', $this->summary('management'));
+
+        $this->grant_visibility_to_managers();
+
+        $this->assertSame(diagnostics::OK, $this->state('management'));
+    }
+
+    /**
+     * A Prohibit anywhere is an error, because it cancels every grant.
+     *
+     * @return void
+     */
+    public function test_prohibit_is_an_error(): void {
+        $this->resetAfterTest();
+        $this->prevent_baseline();
+
+        $this->assertSame(diagnostics::OK, $this->state('prohibit'));
+
+        $roleid = $this->getDataGenerator()->create_role(['shortname' => 'brokenrole', 'name' => 'Broken Role']);
+        assign_capability(diagnostics::CAPABILITY, CAP_PROHIBIT, $roleid, context_system::instance()->id, true);
         accesslib_clear_all_caches_for_unit_testing();
 
-        $results = diagnostics::run();
-
-        $this->assertContains(diagnostics::ERROR, $this->levels($results));
-        $this->assertStringContainsString('Prohibit', $this->messages($results));
+        $this->assertSame(diagnostics::ERROR, $this->state('prohibit'));
+        $this->assertStringContainsString('Broken Role', $this->summary('prohibit'));
     }
 
     /**
-     * A mapped role that mass-enrols its holders is reported as an error.
+     * A mapped role that mass-enrols its holders is an error.
      *
      * @return void
      */
-    public function test_mass_enrolment_role_is_reported(): void {
+    public function test_mass_enrolment_role_is_an_error(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
 
-        $cohort = $this->getDataGenerator()->create_cohort();
+        $cohort = $this->getDataGenerator()->create_cohort(['visible' => 0]);
         $category = $this->getDataGenerator()->create_category();
         $roleid = $this->getDataGenerator()->create_role(['name' => 'Dangerous viewer']);
 
-        assign_capability(
-            'enrol/category:synchronised',
-            CAP_ALLOW,
-            $roleid,
-            context_system::instance()->id,
-            true
-        );
+        assign_capability('enrol/category:synchronised', CAP_ALLOW, $roleid, context_system::instance()->id, true);
         accesslib_clear_all_caches_for_unit_testing();
 
         sync::create_mapping($cohort->id, $category->id, $roleid);
 
-        $results = diagnostics::run();
+        $this->assertSame(diagnostics::ERROR, $this->state('mappedroles'));
+        $this->assertStringContainsString('Dangerous viewer', $this->summary('mappedroles'));
+    }
 
-        $this->assertContains(diagnostics::ERROR, $this->levels($results));
-        $this->assertStringContainsString('Dangerous viewer', $this->messages($results));
+    /**
+     * A visible mapped cohort is reported, because any teacher beneath it can enrol from it.
+     *
+     * @return void
+     */
+    public function test_visible_mapped_cohort_is_reported(): void {
+        $this->resetAfterTest();
+        $this->prevent_baseline();
+
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        $cohort = $this->getDataGenerator()->create_cohort(['name' => 'Loud Audience', 'visible' => 1]);
+
+        sync::create_mapping($cohort->id, $category->id, $roleid);
+
+        $this->assertSame(diagnostics::WARNING, $this->state('cohortvisibility'));
+        $this->assertStringContainsString('Loud Audience', $this->summary('cohortvisibility'));
+    }
+
+    /**
+     * A cohort granting a category outside its own area is reported as a delegation leak.
+     *
+     * @return void
+     */
+    public function test_cohort_outside_its_mapped_category_is_reported(): void {
+        $this->resetAfterTest();
+        $this->prevent_baseline();
+
+        $owned = $this->getDataGenerator()->create_category(['name' => 'Owned Area']);
+        $elsewhere = $this->getDataGenerator()->create_category(['name' => 'Someone Elses Area']);
+
+        $cohort = $this->getDataGenerator()->create_cohort([
+            'name' => 'Local Audience',
+            'visible' => 0,
+            'contextid' => \context_coursecat::instance($owned->id)->id,
+        ]);
+
+        $roleid = $this->getDataGenerator()->create_role();
+        set_role_contextlevels($roleid, [CONTEXT_COURSECAT]);
+
+        sync::create_mapping($cohort->id, $elsewhere->id, $roleid);
+
+        $this->assertSame(diagnostics::WARNING, $this->state('cohortscope'));
+        $this->assertStringContainsString('Local Audience', $this->summary('cohortscope'));
+
+        // Mapped within its own area, it is fine.
+        sync::delete_mappings(['cohortid' => $cohort->id]);
+        sync::create_mapping($cohort->id, $owned->id, $roleid);
+
+        $this->assertSame(diagnostics::OK, $this->state('cohortscope'));
     }
 
     /**
@@ -191,147 +316,46 @@ final class diagnostics_test extends \advanced_testcase {
         ]);
 
         $user = $this->getDataGenerator()->create_user();
-        $cohort = $this->getDataGenerator()->create_cohort();
+        $cohort = $this->getDataGenerator()->create_cohort(['visible' => 0]);
         cohort_add_member($cohort->id, $user->id);
 
         $roleid = $this->getDataGenerator()->create_role();
-        assign_capability(
-            diagnostics::CAPABILITY,
-            CAP_ALLOW,
-            $roleid,
-            context_system::instance()->id,
-            true
-        );
+        assign_capability(diagnostics::CAPABILITY, CAP_ALLOW, $roleid, context_system::instance()->id, true);
         set_role_contextlevels($roleid, [CONTEXT_COURSECAT]);
         accesslib_clear_all_caches_for_unit_testing();
 
         sync::create_mapping($cohort->id, $child->id, $roleid);
         accesslib_clear_all_caches_for_unit_testing();
 
-        $messages = $this->messages(diagnostics::run());
-
-        $this->assertStringContainsString('Granted Child', $messages);
-        $this->assertStringContainsString('Hidden Parent', $messages);
+        $this->assertSame(diagnostics::WARNING, $this->state('reachability'));
+        $this->assertStringContainsString('Granted Child', $this->summary('reachability'));
     }
 
     /**
-     * A cohort scoped to one category but mapped to another is reported as a delegation leak.
+     * A correctly configured site reports nothing worse than a note.
      *
      * @return void
      */
-    public function test_cohort_outside_its_mapped_category_is_reported(): void {
-        $this->resetAfterTest();
-        $this->prevent_baseline();
-
-        $owned = $this->getDataGenerator()->create_category(['name' => 'Owned Area']);
-        $elsewhere = $this->getDataGenerator()->create_category(['name' => 'Someone Elses Area']);
-
-        // A cohort that the managers of "Owned Area" can add members to.
-        $cohort = $this->getDataGenerator()->create_cohort([
-            'name' => 'Local Audience',
-            'contextid' => \context_coursecat::instance($owned->id)->id,
-        ]);
-
-        $roleid = $this->getDataGenerator()->create_role();
-        set_role_contextlevels($roleid, [CONTEXT_COURSECAT]);
-
-        // Mapping it to a category outside that area hands them access they do not administer.
-        sync::create_mapping($cohort->id, $elsewhere->id, $roleid);
-
-        $messages = $this->messages(diagnostics::run());
-
-        $this->assertStringContainsString('Local Audience', $messages);
-        $this->assertStringContainsString('Someone Elses Area', $messages);
-
-        // The same cohort mapped within its own area is fine.
-        sync::delete_mappings(['cohortid' => $cohort->id]);
-        sync::create_mapping($cohort->id, $owned->id, $roleid);
-
-        // Assert on the scope wording specifically: the cohort may be named by other checks.
-        $this->assertStringNotContainsString('sits outside it', $this->messages(diagnostics::run()));
-    }
-
-    /**
-     * Restores category visibility to the roles that manage categories.
-     *
-     * No core role allows the capability explicitly - Manager, Course creator and Teacher all
-     * inherited it from Authenticated user - so preventing it there takes it from them too. A
-     * correctly configured site has to give it back.
-     *
-     * @return void
-     */
-    protected function grant_visibility_to_managers(): void {
-        global $DB;
-
-        foreach (['manager', 'coursecreator', 'editingteacher'] as $shortname) {
-            $role = $DB->get_record('role', ['shortname' => $shortname], '*', MUST_EXIST);
-            assign_capability(
-                diagnostics::CAPABILITY,
-                CAP_ALLOW,
-                $role->id,
-                context_system::instance()->id,
-                true
-            );
-        }
-        accesslib_clear_all_caches_for_unit_testing();
-    }
-
-    /**
-     * A role that can manage categories but can no longer see them is reported.
-     *
-     * Every category management operation is gated behind category visibility, so such a role
-     * holds permissions its holders cannot actually use - silently.
-     *
-     * @return void
-     */
-    public function test_privileged_role_without_visibility_is_reported(): void {
-        $this->resetAfterTest();
-        $this->prevent_baseline();
-
-        $messages = $this->messages(diagnostics::run());
-
-        $this->assertStringContainsString('Manager', $messages);
-        $this->assertStringContainsString('moodle/category:viewcourselist', $messages);
-
-        // Giving the capability back clears the warning.
-        $this->grant_visibility_to_managers();
-
-        $this->assertStringNotContainsString('still appear to have', $this->messages(diagnostics::run()));
-    }
-
-    /**
-     * A correctly configured site with a reachable mapping reports nothing alarming.
-     *
-     * @return void
-     */
-    public function test_healthy_configuration_reports_no_warnings(): void {
+    public function test_healthy_configuration_is_clean(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
         $this->grant_visibility_to_managers();
 
         $category = $this->getDataGenerator()->create_category();
         $user = $this->getDataGenerator()->create_user();
-
-        // Hidden, so teachers cannot pick the audience up for cohort sync enrolment.
         $cohort = $this->getDataGenerator()->create_cohort(['visible' => 0]);
         cohort_add_member($cohort->id, $user->id);
 
         $roleid = $this->getDataGenerator()->create_role();
-        assign_capability(
-            diagnostics::CAPABILITY,
-            CAP_ALLOW,
-            $roleid,
-            context_system::instance()->id,
-            true
-        );
+        assign_capability(diagnostics::CAPABILITY, CAP_ALLOW, $roleid, context_system::instance()->id, true);
         set_role_contextlevels($roleid, [CONTEXT_COURSECAT]);
         accesslib_clear_all_caches_for_unit_testing();
 
         sync::create_mapping($cohort->id, $category->id, $roleid);
 
-        $levels = $this->levels(diagnostics::run());
+        $states = array_column(diagnostics::run(), 'state');
 
-        $this->assertNotContains(diagnostics::WARNING, $levels);
-        $this->assertNotContains(diagnostics::ERROR, $levels);
+        $this->assertNotContains(diagnostics::ERROR, $states);
+        $this->assertNotContains(diagnostics::WARNING, $states);
     }
 }

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 (2026-09-30)
+
+### Changed
+
+- **The screen is now two tabs: Mappings and Status.** The checks used to be six full-width alert
+  banners stacked above the table, which read as a list of complaints rather than a report.
+- **Checks are a report.** Every check reports a row whatever its state, so "all clear" can be
+  told apart from "did not run". Each row is a short result, a state badge, a help icon carrying
+  the full reasoning, and where relevant a link straight to the screen that fixes it.
+- **The Mappings tab holds only mappings**, with a search box and category and role filters. The
+  filter options are drawn from the mappings that exist rather than every category on the site, so
+  the lists stay short and cannot offer a choice that returns nothing.
+- Settings, Cohorts and Define roles moved into a **Related settings and pages** section on the
+  Status tab, and the Settings tab was removed - it navigated away from a page whose tabs did not
+  follow. The settings page itself gained a link back.
+
+### Fixed
+
+- `get_string('manage')` was not a core string, so the page filled with "invalid string
+  identifier" errors for anyone logged in. HTTP status checks could not see this, because the page
+  still returned a redirect for anonymous requests.
+
+### Added
+
+- `tests/strings_test.php`, asserting every literal `get_string()` call resolves and that no
+  defined string is unused. Check names, help text and state labels are built by concatenation, so
+  `diagnostics_test` asserts separately that each check has all three.
+
 ## 0.5.0 (2026-09-28)
 
 ### Added

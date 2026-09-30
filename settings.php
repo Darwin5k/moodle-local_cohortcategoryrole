@@ -41,6 +41,25 @@ if ($hassiteconfig) {
     // Only build the role list when the page is actually being rendered - settings.php is also
     // parsed during upgrades, where these queries would be wasted work.
     if ($ADMIN->fulltree) {
+        // This page is reached from a tab on the plugin's own screen, but the admin settings
+        // framework renders it without those tabs. Offer the way back rather than leaving the
+        // navigation as a dead end. Plain links only: no renderer is safe to call here, because
+        // the admin tree is also built for admin search.
+        $settings->add(new admin_setting_heading(
+            'local_cohortcategoryrole/returnnav',
+            '',
+            get_string('returnto', 'local_cohortcategoryrole') . ' '
+                . html_writer::link(
+                    new moodle_url('/local/cohortcategoryrole/index.php'),
+                    get_string('tabmappings', 'local_cohortcategoryrole')
+                )
+                . ' | '
+                . html_writer::link(
+                    new moodle_url('/local/cohortcategoryrole/index.php', ['tab' => 'status']),
+                    get_string('tabstatus', 'local_cohortcategoryrole')
+                )
+        ));
+
         $settings->add(new admin_setting_configcheckbox(
             'local_cohortcategoryrole/automap',
             get_string('automap', 'local_cohortcategoryrole'),
