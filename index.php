@@ -38,6 +38,17 @@ $tab = optional_param('tab', 'mappings', PARAM_ALPHA);
 $search = trim(optional_param('search', '', PARAM_TEXT));
 $filtercategory = optional_param('filtercategory', 0, PARAM_INT);
 $filterrole = optional_param('filterrole', 0, PARAM_INT);
+$show = optional_param('show', 'mapped', PARAM_ALPHA);
+$includesystem = optional_param('includesystem', 0, PARAM_BOOL);
+
+if (!in_array($show, ['mapped', 'unmapped', 'both'], true)) {
+    $show = 'mapped';
+}
+
+// Arriving with a list filter means the mappings tab, even if the link did not say so.
+if (optional_param('show', '', PARAM_ALPHA) !== '') {
+    $tab = 'mappings';
+}
 
 $perpage = 50;
 $baseurl = new moodle_url('/local/cohortcategoryrole/index.php');
@@ -88,6 +99,11 @@ $tabs = [
         get_string('tabmappings', 'local_cohortcategoryrole')
     ),
     new tabobject('status', new moodle_url($baseurl, ['tab' => 'status']), $statuslabel),
+    new tabobject(
+        'settings',
+        new moodle_url($baseurl, ['tab' => 'settings']),
+        get_string('tabsettings', 'local_cohortcategoryrole')
+    ),
 ];
 
 echo $OUTPUT->header();
@@ -130,79 +146,77 @@ if ($tab === 'status') {
     }
 
     echo html_writer::table($statustable);
-
-    // Category cohorts that grant nothing. Cohort membership alone has no effect on what a user
-    // can see, so a cohort sitting in a category looks configured while doing nothing at all.
-    $categorycohorts = $DB->get_records_sql(
-        "SELECT c.id, c.name, ctx.instanceid AS categoryid
-           FROM {cohort} c
-           JOIN {context} ctx ON ctx.id = c.contextid AND ctx.contextlevel = :level
-       ORDER BY c.name ASC",
-        ['level' => CONTEXT_COURSECAT]
-    );
-
-    $mappedpairs = [];
-    foreach ($DB->get_records(sync::TABLE, null, '', 'id, cohortid, categoryid') as $row) {
-        $mappedpairs[$row->cohortid . ':' . $row->categoryid] = true;
-    }
-
-    $unmapped = [];
-    foreach ($categorycohorts as $cohort) {
-        if (!isset($mappedpairs[$cohort->id . ':' . $cohort->categoryid])) {
-            $unmapped[] = $cohort;
-        }
-    }
-
-    if ($unmapped) {
-        echo $OUTPUT->heading(get_string('unmappedheading', 'local_cohortcategoryrole'), 3);
-        echo html_writer::tag('p', get_string('unmappedintro', 'local_cohortcategoryrole'));
-
-        $items = [];
-        foreach ($unmapped as $cohort) {
-            $unmappedcategory = core_course_category::get($cohort->categoryid, IGNORE_MISSING, true);
-            $items[] = format_string($cohort->name)
-                . ' &rarr; ' . ($unmappedcategory ? $unmappedcategory->get_formatted_name() : '?')
-                . ' ' . html_writer::link(
-                    new moodle_url('/local/cohortcategoryrole/edit.php', [
-                        'cohortid' => $cohort->id,
-                        'categoryid' => $cohort->categoryid,
-                    ]),
-                    get_string('unmappedmapthis', 'local_cohortcategoryrole')
-                );
-        }
-        echo html_writer::alist($items);
-    }
-
-    echo $OUTPUT->heading(get_string('managelinks', 'local_cohortcategoryrole'), 3);
-    echo html_writer::alist([
-        html_writer::link(
-            new moodle_url('/admin/settings.php', ['section' => 'local_cohortcategoryrole_settings']),
-            get_string('tabsettings', 'local_cohortcategoryrole')
-        ),
-        html_writer::link(new moodle_url('/cohort/index.php'), get_string('cohorts', 'cohort')),
-        html_writer::link(new moodle_url('/admin/roles/define.php'), get_string('defineroles', 'role')),
-    ]);
-
     echo $OUTPUT->footer();
     die();
 }
 
-// Mappings tab: the mappings, and nothing else.
+if ($tab === 'settings') {
+    // Everything here lives elsewhere in Site administration. Saying where, rather than presenting
+    // the links as if they were part of this plugin, keeps the way back obvious.
+    echo html_writer::tag('p', get_string('settingsintro', 'local_cohortcategoryrole'));
 
+    // Identifiers are spelled out rather than built by concatenation, so strings_test can see them.
+    $links = [
+        [
+            new moodle_url('/admin/settings.php', ['section' => 'local_cohortcategoryrole_settings']),
+            'linkpluginsettings',
+            'linkpluginsettingspurpose',
+            'linkpluginsettingslocation',
+        ],
+        [new moodle_url('/cohort/index.php'), 'linkcohorts', 'linkcohortspurpose', 'linkcohortslocation'],
+        [
+            new moodle_url('/admin/roles/manage.php'),
+            'linkdefineroles',
+            'linkdefinerolespurpose',
+            'linkdefineroleslocation',
+        ],
+    ];
+
+    $settingstable = new html_table();
+    $settingstable->head = [
+        get_string('columnpage', 'local_cohortcategoryrole'),
+        get_string('columnpurpose', 'local_cohortcategoryrole'),
+        get_string('columnlocation', 'local_cohortcategoryrole'),
+    ];
+    $settingstable->attributes['class'] = 'generaltable';
+
+    foreach ($links as [$url, $name, $purpose, $location]) {
+        $settingstable->data[] = [
+            html_writer::link($url, get_string($name, 'local_cohortcategoryrole')),
+            get_string($purpose, 'local_cohortcategoryrole'),
+            html_writer::tag('span', get_string($location, 'local_cohortcategoryrole'), ['class' => 'text-muted']),
+        ];
+    }
+
+    echo html_writer::table($settingstable);
+    echo $OUTPUT->footer();
+    die();
+}
+
+// Mappings tab: one row per mapping, plus a row for each cohort with no mapping when asked for.
 $roles = role_fix_names(get_all_roles(), null, ROLENAME_ORIGINAL);
 
-// Filter options are drawn from the mappings that exist, not from every category and role on the
-// site: on a site with hundreds of categories, a list of the ones actually in use is far shorter
-// and is the only set that can return a result.
-$usedcategories = [];
+// Filter options come from what exists - mapped categories, and the categories cohorts live in -
+// rather than every category on the site, so every choice can return a result.
+$usedcategoryids = [];
 $usedroles = [];
 foreach ($DB->get_records(sync::TABLE, null, '', 'id, categoryid, roleid') as $row) {
-    $usedcategories[(int) $row->categoryid] = true;
+    $usedcategoryids[(int) $row->categoryid] = true;
     $usedroles[(int) $row->roleid] = true;
+}
+$homecategoryids = $DB->get_fieldset_sql(
+    "SELECT DISTINCT ctx.instanceid
+       FROM {cohort} c
+       JOIN {context} ctx ON ctx.id = c.contextid
+      WHERE ctx.contextlevel = :level",
+    ['level' => CONTEXT_COURSECAT]
+);
+foreach ($homecategoryids as $homecategoryid) {
+    $usedcategoryids[(int) $homecategoryid] = true;
 }
 
 $categoryoptions = [0 => get_string('filterany', 'local_cohortcategoryrole')];
-foreach (core_course_category::get_many(array_keys($usedcategories)) as $usedcategory) {
+foreach (core_course_category::get_many(array_keys($usedcategoryids)) as $usedcategory) {
     $categoryoptions[$usedcategory->id] = $usedcategory->get_formatted_name();
 }
 
@@ -213,20 +227,41 @@ foreach (array_keys($usedroles) as $usedroleid) {
     }
 }
 
-// Build the filtered query.
+$showoptions = [
+    'mapped' => get_string('showmapped', 'local_cohortcategoryrole'),
+    'unmapped' => get_string('showunmapped', 'local_cohortcategoryrole'),
+    'both' => get_string('showboth', 'local_cohortcategoryrole'),
+];
+
+// The list starts from cohorts. A cohort with mappings yields one row per mapping; a cohort with
+// none yields a single row with no mapping columns, which is what "unmapped" means here.
+$params = ['catlevel' => CONTEXT_COURSECAT];
 $where = [];
-$params = [];
+
+if ($show === 'mapped') {
+    $where[] = 'm.id IS NOT NULL';
+} else if ($show === 'unmapped') {
+    $where[] = 'm.id IS NULL';
+}
+
+// System cohorts imply no category, and many exist for reasons unrelated to this plugin, so
+// unmapped ones only appear when asked for. A mapped system cohort is a real grant and always shows.
+if (!$includesystem) {
+    $where[] = '(m.id IS NOT NULL OR ctx.contextlevel = :catlevelfilter)';
+    $params['catlevelfilter'] = CONTEXT_COURSECAT;
+}
 
 if ($search !== '') {
     $cohortlike = $DB->sql_like('c.name', ':searchcohort', false);
-    $categorylike = $DB->sql_like('cc.name', ':searchcategory', false);
+    $categorylike = $DB->sql_like('COALESCE(cc.name, hc.name)', ':searchcategory', false);
     $where[] = "($cohortlike OR $categorylike)";
     $params['searchcohort'] = '%' . $DB->sql_like_escape($search) . '%';
     $params['searchcategory'] = '%' . $DB->sql_like_escape($search) . '%';
 }
 
 if ($filtercategory) {
-    $where[] = 'm.categoryid = :filtercategory';
+    // The mapped category for a mapping; the context category for an unmapped cohort.
+    $where[] = 'COALESCE(m.categoryid, hc.id) = :filtercategory';
     $params['filtercategory'] = $filtercategory;
 }
 
@@ -237,20 +272,30 @@ if ($filterrole) {
 
 $wheresql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$from = "FROM {" . sync::TABLE . "} m
-    LEFT JOIN {cohort} c ON c.id = m.cohortid
+$from = "FROM {cohort} c
+         JOIN {context} ctx ON ctx.id = c.contextid
+    LEFT JOIN {course_categories} hc ON hc.id = ctx.instanceid AND ctx.contextlevel = :catlevel
+    LEFT JOIN {" . sync::TABLE . "} m ON m.cohortid = c.id
     LEFT JOIN {course_categories} cc ON cc.id = m.categoryid";
 
-$totalmappings = $DB->count_records_sql("SELECT COUNT(1) $from $wheresql", $params);
-$mappings = $DB->get_records_sql(
-    "SELECT m.id, m.cohortid, m.categoryid, m.roleid $from $wheresql ORDER BY c.name ASC, cc.name ASC",
+$totalrows = $DB->count_records_sql("SELECT COUNT(1) $from $wheresql", $params);
+
+// The first column must be unique for get_records_sql(). Mapping ids are positive and an unmapped
+// cohort contributes exactly one row, so a negated cohort id cannot collide with one.
+$rows = $DB->get_records_sql(
+    "SELECT COALESCE(m.id, -c.id) AS rowkey, c.id AS cohortid, c.name AS cohortname, c.visible,
+            ctx.contextlevel, hc.id AS homecategoryid, m.id AS mappingid, m.categoryid, m.roleid
+     $from $wheresql
+     ORDER BY c.name ASC, cc.name ASC, m.id ASC",
     $params,
     $page * $perpage,
     $perpage
 );
 
+$filtersactive = $search !== '' || $filtercategory || $filterrole || $show !== 'mapped' || $includesystem;
+
 // Keep the filters on paging links.
-$filterparams = ['tab' => 'mappings'];
+$filterparams = ['tab' => 'mappings', 'show' => $show];
 if ($search !== '') {
     $filterparams['search'] = $search;
 }
@@ -260,10 +305,13 @@ if ($filtercategory) {
 if ($filterrole) {
     $filterparams['filterrole'] = $filterrole;
 }
+if ($includesystem) {
+    $filterparams['includesystem'] = 1;
+}
 $pageurl = new moodle_url($baseurl, $filterparams);
 
 // Counts come from two grouped queries rather than two per row: a site using this plugin is
-// expected to have many mappings, and per-row counting would put hundreds of queries on the page.
+// expected to have many cohorts, and per-row counting would put hundreds of queries on the page.
 // Both are grouped by a unique column, so get_records_sql() cannot collapse rows here.
 $membercounts = $DB->get_records_sql(
     'SELECT cohortid, COUNT(1) AS total FROM {cohort_members} GROUP BY cohortid'
@@ -273,13 +321,32 @@ $assignmentcounts = $DB->get_records_sql(
     ['component' => sync::COMPONENT]
 );
 
-$cohortrecords = $DB->get_records('cohort', null, '', 'id, name, contextid, visible');
-$categories = core_course_category::get_many(array_column($mappings, 'categoryid'));
+$displaycategoryids = [];
+foreach ($rows as $row) {
+    if ($row->categoryid) {
+        $displaycategoryids[(int) $row->categoryid] = true;
+    }
+    if ($row->homecategoryid) {
+        $displaycategoryids[(int) $row->homecategoryid] = true;
+    }
+}
+$categories = core_course_category::get_many(array_keys($displaycategoryids));
 
 // The filter form.
 $filterform = html_writer::start_tag('form', ['method' => 'get', 'action' => $baseurl->out(false),
     'class' => 'row row-cols-lg-auto g-2 align-items-end mb-3']);
 $filterform .= html_writer::empty_tag('input', ['type' => 'hidden', 'name' => 'tab', 'value' => 'mappings']);
+
+$filterform .= html_writer::div(
+    html_writer::label(
+        get_string('filtershow', 'local_cohortcategoryrole'),
+        'ccr_show',
+        true,
+        ['class' => 'form-label']
+    )
+    . html_writer::select($showoptions, 'show', $show, false, ['id' => 'ccr_show', 'class' => 'form-select']),
+    'col'
+);
 
 $filterform .= html_writer::div(
     html_writer::label(
@@ -327,13 +394,32 @@ $filterform .= html_writer::div(
     'col'
 );
 
+$systemcheckbox = ['type' => 'checkbox', 'id' => 'ccr_system', 'name' => 'includesystem', 'value' => 1,
+    'class' => 'form-check-input'];
+if ($includesystem) {
+    $systemcheckbox['checked'] = 'checked';
+}
+$filterform .= html_writer::div(
+    html_writer::div(
+        html_writer::empty_tag('input', $systemcheckbox)
+        . html_writer::label(
+            get_string('filterincludesystem', 'local_cohortcategoryrole'),
+            'ccr_system',
+            false,
+            ['class' => 'form-check-label']
+        ),
+        'form-check'
+    ),
+    'col'
+);
+
 $filterform .= html_writer::div(
     html_writer::empty_tag('input', ['type' => 'submit', 'class' => 'btn btn-secondary',
         'value' => get_string('filterapply', 'local_cohortcategoryrole')]),
     'col'
 );
 
-if ($search !== '' || $filtercategory || $filterrole) {
+if ($filtersactive) {
     $filterform .= html_writer::div(
         html_writer::link($baseurl, get_string('filterclear', 'local_cohortcategoryrole')),
         'col'
@@ -355,35 +441,57 @@ $table->head = [
 ];
 $table->attributes['class'] = 'generaltable';
 
-foreach ($mappings as $mapping) {
-    $cohort = $cohortrecords[$mapping->cohortid] ?? null;
-    $category = $categories[$mapping->categoryid] ?? null;
+foreach ($rows as $row) {
+    $homecategory = $row->homecategoryid ? ($categories[$row->homecategoryid] ?? null) : null;
 
-    // Where the cohort itself lives, and whether that agrees with what it is mapped to.
-    $cohortcontextcell = get_string('systemcohort', 'local_cohortcategoryrole');
-    if ($cohort) {
-        $cohortcategoryid = sync::category_for_cohort((int) $cohort->id);
-        if ($cohortcategoryid) {
-            $cohortcategory = core_course_category::get($cohortcategoryid, IGNORE_MISSING, true);
-            $cohortcontextcell = $cohortcategory ? $cohortcategory->get_formatted_name() : '?';
-            if ($cohortcategoryid !== (int) $mapping->categoryid) {
-                $cohortcontextcell .= ' ' . html_writer::tag(
-                    'span',
-                    get_string('scopeoutside', 'local_cohortcategoryrole'),
-                    ['class' => 'badge bg-warning text-dark']
-                );
-            }
+    $cohortcell = html_writer::link(
+        new moodle_url('/cohort/edit.php', ['id' => $row->cohortid]),
+        format_string($row->cohortname)
+    );
+
+    // The cohort's context: System, or the category it lives in.
+    $contextcell = get_string('systemcohort', 'local_cohortcategoryrole');
+    if ($homecategory) {
+        $contextcell = $homecategory->get_formatted_name();
+        if ($row->mappingid && (int) $row->homecategoryid !== (int) $row->categoryid) {
+            $contextcell .= ' ' . html_writer::tag(
+                'span',
+                get_string('scopeoutside', 'local_cohortcategoryrole'),
+                ['class' => 'badge bg-warning text-dark']
+            );
         }
     }
 
-    $cohortcell = '-';
-    if ($cohort) {
-        $cohortcell = html_writer::link(
-            new moodle_url('/cohort/edit.php', ['id' => $cohort->id]),
-            format_string($cohort->name)
-        );
+    $visiblecell = $row->visible ? get_string('yes') : get_string('no');
+    $members = isset($membercounts[$row->cohortid]) ? $membercounts[$row->cohortid]->total : 0;
+
+    if (!$row->mappingid) {
+        // An unmapped cohort grants nothing, so it must not look like a mapping.
+        $prefill = ['cohortid' => $row->cohortid];
+        $actionlabel = get_string('unmappedmapcohort', 'local_cohortcategoryrole');
+        if ($row->homecategoryid) {
+            $prefill['categoryid'] = $row->homecategoryid;
+            $actionlabel = get_string('unmappedmapthis', 'local_cohortcategoryrole');
+        }
+
+        $table->data[] = [
+            $cohortcell,
+            $contextcell,
+            $visiblecell,
+            '-',
+            html_writer::tag(
+                'span',
+                get_string('unmappedbadge', 'local_cohortcategoryrole'),
+                ['class' => 'badge bg-secondary']
+            ),
+            $members,
+            '-',
+            html_writer::link(new moodle_url('/local/cohortcategoryrole/edit.php', $prefill), $actionlabel),
+        ];
+        continue;
     }
 
+    $category = $categories[$row->categoryid] ?? null;
     $categorycell = '-';
     if ($category) {
         $categorycell = html_writer::link(
@@ -393,15 +501,15 @@ foreach ($mappings as $mapping) {
     }
 
     $rolecell = '-';
-    if (isset($roles[$mapping->roleid])) {
+    if (isset($roles[$row->roleid])) {
         $rolecell = html_writer::link(
-            new moodle_url('/admin/roles/define.php', ['action' => 'view', 'roleid' => $mapping->roleid]),
-            $roles[$mapping->roleid]->localname
+            new moodle_url('/admin/roles/define.php', ['action' => 'view', 'roleid' => $row->roleid]),
+            $roles[$row->roleid]->localname
         );
     }
 
     $deleteicon = $OUTPUT->action_icon(
-        new moodle_url($baseurl, ['delete' => $mapping->id]),
+        new moodle_url($baseurl, ['delete' => $row->mappingid]),
         new pix_icon('t/delete', get_string('delete')),
         null,
         ['aria-label' => get_string('deletemapping', 'local_cohortcategoryrole')]
@@ -409,12 +517,12 @@ foreach ($mappings as $mapping) {
 
     $table->data[] = [
         $cohortcell,
-        $cohortcontextcell,
-        $cohort && $cohort->visible ? get_string('yes') : get_string('no'),
+        $contextcell,
+        $visiblecell,
         $categorycell,
         $rolecell,
-        isset($membercounts[$mapping->cohortid]) ? $membercounts[$mapping->cohortid]->total : 0,
-        isset($assignmentcounts[$mapping->id]) ? $assignmentcounts[$mapping->id]->total : 0,
+        $members,
+        isset($assignmentcounts[$row->mappingid]) ? $assignmentcounts[$row->mappingid]->total : 0,
         $deleteicon,
     ];
 }
@@ -428,15 +536,15 @@ if ($worst === diagnostics::ERROR || $worst === diagnostics::WARNING) {
     );
 }
 
-if ($DB->count_records(sync::TABLE)) {
+if ($DB->record_exists('cohort', [])) {
     echo $filterform;
 }
 
 if ($table->data) {
-    echo $OUTPUT->paging_bar($totalmappings, $page, $perpage, $pageurl);
+    echo $OUTPUT->paging_bar($totalrows, $page, $perpage, $pageurl);
     echo html_writer::table($table);
-    echo $OUTPUT->paging_bar($totalmappings, $page, $perpage, $pageurl);
-} else if ($search !== '' || $filtercategory || $filterrole) {
+    echo $OUTPUT->paging_bar($totalrows, $page, $perpage, $pageurl);
+} else if ($filtersactive) {
     echo $OUTPUT->notification(get_string('filternoresults', 'local_cohortcategoryrole'), notification::NOTIFY_INFO);
 } else {
     echo $OUTPUT->notification(get_string('nomappings', 'local_cohortcategoryrole'), notification::NOTIFY_INFO);

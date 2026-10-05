@@ -129,6 +129,7 @@ final class diagnostics_test extends \advanced_testcase {
         $this->assertContains('mappedroles', $ids);
         $this->assertContains('cohortvisibility', $ids);
         $this->assertContains('cohortscope', $ids);
+        $this->assertContains('unmapped', $ids);
         $this->assertContains('orphans', $ids);
         $this->assertContains('reachability', $ids);
         $this->assertSame(count($ids), count(array_unique($ids)));
@@ -298,6 +299,38 @@ final class diagnostics_test extends \advanced_testcase {
         sync::create_mapping($cohort->id, $owned->id, $roleid);
 
         $this->assertSame(diagnostics::OK, $this->state('cohortscope'));
+    }
+
+    /**
+     * Category cohorts with no mapping at all are counted, as a note rather than a warning.
+     *
+     * System cohorts are left out: they imply no category, and many exist for other reasons.
+     *
+     * @return void
+     */
+    public function test_unmapped_category_cohorts_are_noted(): void {
+        $this->resetAfterTest();
+
+        $category = $this->getDataGenerator()->create_category();
+        $categorycontextid = \context_coursecat::instance($category->id)->id;
+
+        $this->assertSame(diagnostics::OK, $this->state('unmapped'));
+
+        // A system cohort with no mapping does not count.
+        $this->getDataGenerator()->create_cohort(['contextid' => context_system::instance()->id]);
+        $this->assertSame(diagnostics::OK, $this->state('unmapped'));
+
+        // A category cohort with no mapping does, and is a note rather than a warning.
+        $cohort = $this->getDataGenerator()->create_cohort(['contextid' => $categorycontextid]);
+        $this->assertSame(diagnostics::INFO, $this->state('unmapped'));
+        $this->assertStringContainsString('1', $this->summary('unmapped'));
+
+        // Any mapping at all takes it off the list, even one to another category.
+        $elsewhere = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        sync::create_mapping($cohort->id, $elsewhere->id, $roleid);
+
+        $this->assertSame(diagnostics::OK, $this->state('unmapped'));
     }
 
     /**

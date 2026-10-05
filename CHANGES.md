@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.7.0 (2026-10-05)
+
+### Changed
+
+- **One list for mappings and unmapped cohorts.** The list is now built from cohorts: a cohort with
+  mappings shows one row per mapping, and a cohort with none shows a single row. A **Show** filter
+  chooses *Mapped* (the default), *Unmapped*, or both. Unmapped rows carry an **Unmapped** badge in
+  place of the role, and their own action instead of a delete icon: **Map to this category** for a
+  category cohort, which pre-fills both the cohort and its category, or **Map this cohort** for a
+  system cohort, which pre-fills the cohort and leaves the category to choose.
+- **Unmapped system cohorts are hidden unless asked for**, with an *Include system cohorts* box. A
+  system cohort implies no category and many exist for reasons unrelated to this plugin, so listing
+  them all by default would be noise. A mapped system cohort is a real grant and always shows.
+- "Unmapped" now means a cohort with **no mapping at all**. A category cohort mapped somewhere other
+  than its own category is no longer counted as unmapped; the "outside this category" badge covers
+  that case.
+- The category filter matches the mapped category for a mapping and the context category for an
+  unmapped cohort, and its options include categories that hold cohorts as well as mapped ones.
+- **Settings tab restored**, now as a page of its own listing Plugin settings, Cohorts and Define
+  roles, each with what it is for and where it lives in Site administration, so it is clear these
+  open other areas of the site.
+- The Status tab's unmapped-cohorts panel and related links are gone. Unmapped category cohorts are
+  now a row in the report - a note, not a warning - linking to the list filtered to *Unmapped*.
+- The **Cohort belongs to** column is now **Cohort context**, matching the term Moodle uses.
+- Shorter help text for **Automatically map cohorts created in a category**, stating up front that
+  enabling it does not map cohorts that already exist.
+
 ## 0.6.0 (2026-09-30)
 
 ### Changed

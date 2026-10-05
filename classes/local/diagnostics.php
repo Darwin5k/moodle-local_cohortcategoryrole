@@ -77,6 +77,7 @@ class diagnostics {
             self::check_mapped_roles(),
             self::check_cohort_visibility(),
             self::check_cohort_scope(),
+            self::check_unmapped(),
             self::check_orphans(),
             self::check_reachability(),
         ];
@@ -405,6 +406,39 @@ class diagnostics {
             implode(', ', array_unique($outside)),
             new moodle_url('/cohort/index.php'),
             self::str('actioncohorts')
+        );
+    }
+
+    /**
+     * Category cohorts with no mapping at all.
+     *
+     * Not a fault - a cohort may live in a category for enrolment or delegation alone - so this is
+     * a note rather than a warning. But membership of such a cohort grants nothing, which is easy to
+     * mistake for a working audience, so the count is worth seeing.
+     *
+     * @return stdClass
+     */
+    protected static function check_unmapped(): stdClass {
+        global $DB;
+
+        $count = $DB->count_records_sql(
+            "SELECT COUNT(1)
+               FROM {cohort} c
+               JOIN {context} ctx ON ctx.id = c.contextid AND ctx.contextlevel = :level
+              WHERE NOT EXISTS (SELECT 1 FROM {local_cohortcategoryrole} m WHERE m.cohortid = c.id)",
+            ['level' => CONTEXT_COURSECAT]
+        );
+
+        if (!$count) {
+            return self::row('unmapped', self::OK, self::str('resultallmapped'));
+        }
+
+        return self::row(
+            'unmapped',
+            self::INFO,
+            self::str('resultunmappedcount', $count),
+            new moodle_url('/local/cohortcategoryrole/index.php', ['show' => 'unmapped']),
+            self::str('actionviewunmapped')
         );
     }
 
