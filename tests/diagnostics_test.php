@@ -65,7 +65,7 @@ final class diagnostics_test extends \advanced_testcase {
     }
 
     /**
-     * Returns the summary reported for one check.
+     * Returns what one check found, or an empty string when its requirement is met.
      *
      * @param string $id
      * @return string
@@ -73,7 +73,7 @@ final class diagnostics_test extends \advanced_testcase {
     protected function summary(string $id): string {
         foreach (diagnostics::run() as $row) {
             if ($row->id === $id) {
-                return $row->summary;
+                return (string) $row->found;
             }
         }
         $this->fail('No check reported with id ' . $id);
@@ -160,6 +160,21 @@ final class diagnostics_test extends \advanced_testcase {
                 $manager->string_exists('state' . $row->state, 'local_cohortcategoryrole'),
                 'Missing state string for ' . $row->state
             );
+            $this->assertTrue(
+                $manager->string_exists('check' . $row->id . '_requirement', 'local_cohortcategoryrole'),
+                'Missing requirement string for check ' . $row->id
+            );
+            $this->assertTrue(
+                $manager->string_exists('check' . $row->id . '_why', 'local_cohortcategoryrole'),
+                'Missing reason string for check ' . $row->id
+            );
+            if ($row->fix !== null) {
+                $this->assertArrayHasKey(
+                    $row->fix,
+                    \local_cohortcategoryrole\local\fixer::ACTIONS,
+                    'Check ' . $row->id . ' offers an unknown fix'
+                );
+            }
         }
     }
 

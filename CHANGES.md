@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.0 (2026-10-06)
+
+### Changed
+
+- **Status rows state a requirement.** Each row now says what must be true and why - "Authenticated
+  user and Guest must have moodle/category:viewcourselist set to Prevent. Otherwise everyone already
+  sees every category, and mappings change nothing." - on every row, met or not, so a healthy site
+  reads as a reference card. When a requirement is not met, a **Found:** line says what is wrong.
+- Mapping type badges use a distinct, readable colour each: System blue, Home green, Cross amber,
+  Unmapped outlined. Boost's secondary grey failed contrast with white text.
+
+### Added
+
+- **Fix buttons** on the Status rows where a fix is safe: *Set to Prevent*, *Allow for these
+  roles*, *Hide these cohorts*, *Release them now* and *Run now*. Each opens a confirmation page
+  listing exactly what will change, and nothing is applied until confirmed. Capability fixes need
+  `moodle/role:manage` and cohort fixes `moodle/cohort:manage` as well as this plugin's capability,
+  so the screen never lets anyone do more than the core screens would. Fixes are never re-applied
+  automatically, so a later decision by an administrator is never quietly reverted. Changes are
+  logged through core's own events. The baseline fix warns which roles will lose category
+  visibility as a result.
+- Prohibit overrides, mapped role safety and category reachability stay as links only: each is a
+  judgement about roles or category structure that a button cannot make.
+
+### Fixed
+
+- `cli/reconcile.php --checks` printed nothing useful since 0.6.0: it still read the old
+  `level`/`message` fields. It now prints each check's state, name and requirement, with what was
+  found, and **exits 1 when any check reports a warning or a problem**, so monitoring can alert on it.
+
 ## 0.8.0 (2026-10-05)
 
 ### Added

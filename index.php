@@ -27,6 +27,7 @@ require_once($CFG->libdir . '/adminlib.php');
 
 use core\output\notification;
 use local_cohortcategoryrole\local\diagnostics;
+use local_cohortcategoryrole\local\fixer;
 use local_cohortcategoryrole\local\sync;
 
 admin_externalpage_setup('local_cohortcategoryrole');
@@ -127,7 +128,7 @@ if ($tab === 'status') {
     $statustable->head = [
         get_string('columncheck', 'local_cohortcategoryrole'),
         get_string('columnstate', 'local_cohortcategoryrole'),
-        get_string('columnresult', 'local_cohortcategoryrole'),
+        get_string('columnrequirement', 'local_cohortcategoryrole'),
         get_string('actions'),
     ];
     $statustable->attributes['class'] = 'generaltable';
@@ -142,12 +143,36 @@ if ($tab === 'status') {
             ['class' => 'badge ' . $badges[$check->state]]
         );
 
-        $action = '';
-        if ($check->actionurl) {
-            $action = html_writer::link($check->actionurl, $check->actionlabel);
+        // The requirement is always shown, so a healthy site doubles as a reference card for how
+        // things should be set. What was found is added only when the requirement is not met.
+        $requirement = html_writer::div(
+            get_string('check' . $check->id . '_requirement', 'local_cohortcategoryrole'),
+            'fw-semibold'
+        );
+        $requirement .= html_writer::div(
+            get_string('check' . $check->id . '_why', 'local_cohortcategoryrole'),
+            'small text-muted'
+        );
+        if ($check->found !== null) {
+            $requirement .= html_writer::div(
+                html_writer::tag('strong', get_string('foundlabel', 'local_cohortcategoryrole')) . ' ' . $check->found,
+                'mt-1'
+            );
         }
 
-        $statustable->data[] = [$name, $badge, $check->summary, $action];
+        $actions = [];
+        if ($check->fix && fixer::can_apply($check->fix)) {
+            $actions[] = html_writer::link(
+                new moodle_url('/local/cohortcategoryrole/fix.php', ['action' => $check->fix]),
+                fixer::label($check->fix),
+                ['class' => 'btn btn-primary btn-sm mb-1']
+            );
+        }
+        if ($check->actionurl) {
+            $actions[] = html_writer::link($check->actionurl, $check->actionlabel);
+        }
+
+        $statustable->data[] = [$name, $badge, $requirement, implode(html_writer::empty_tag('br'), $actions)];
     }
 
     echo html_writer::table($statustable);

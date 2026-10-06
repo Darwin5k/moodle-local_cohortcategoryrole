@@ -52,7 +52,8 @@ never touches role assignments made by hand or by another plugin.
 
 Options:
   -h, --help     Print this help.
-  -c, --checks   Print the configuration checks instead of reconciling.
+  -c, --checks   Print the configuration checks instead of reconciling. Exits 1 if any check
+                 reports a warning or a problem, so monitoring can alert on it.
 
 Example:
   php local/cohortcategoryrole/cli/reconcile.php
@@ -61,10 +62,28 @@ Example:
 }
 
 if ($options['checks']) {
-    foreach (\local_cohortcategoryrole\local\diagnostics::run() as $check) {
-        cli_writeln('[' . strtoupper($check->level) . '] ' . $check->message);
+    $checks = \local_cohortcategoryrole\local\diagnostics::run();
+
+    foreach ($checks as $check) {
+        cli_writeln(sprintf(
+            '[%s] %s: %s',
+            strtoupper(get_string('state' . $check->state, 'local_cohortcategoryrole')),
+            get_string('check' . $check->id, 'local_cohortcategoryrole'),
+            get_string('check' . $check->id . '_requirement', 'local_cohortcategoryrole')
+        ));
+        if ($check->found !== null) {
+            $found = html_to_text($check->found, 0, false);
+            cli_writeln('    ' . get_string('foundlabel', 'local_cohortcategoryrole') . ' ' . $found);
+        }
     }
-    exit(0);
+
+    // A non-zero exit lets monitoring treat a warning or error as a failure.
+    $worst = \local_cohortcategoryrole\local\diagnostics::worst_state($checks);
+    $failed = in_array($worst, [
+        \local_cohortcategoryrole\local\diagnostics::WARNING,
+        \local_cohortcategoryrole\local\diagnostics::ERROR,
+    ], true);
+    exit($failed ? 1 : 0);
 }
 
 $totals = \local_cohortcategoryrole\local\sync::reconcile();
