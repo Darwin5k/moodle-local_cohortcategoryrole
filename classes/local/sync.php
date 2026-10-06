@@ -55,6 +55,15 @@ class sync {
     /** @var string Name of the mapping table. */
     public const TABLE = 'local_cohortcategoryrole';
 
+    /** @var string Mapping type: the cohort's context is System, so it is managed centrally. */
+    public const TYPE_SYSTEM = 'system';
+
+    /** @var string Mapping type: the mapped category is the cohort's context category or below it. */
+    public const TYPE_HOME = 'home';
+
+    /** @var string Mapping type: the mapped category is outside the cohort's context category. */
+    public const TYPE_CROSS = 'cross';
+
     /** @var int Members above which work is queued rather than done in the request. */
     public const DEFAULT_DEFER_LIMIT = 500;
 
@@ -394,6 +403,43 @@ class sync {
         }
 
         return (int) $context->instanceid;
+    }
+
+    /**
+     * Classifies a mapping as System, Home or Cross.
+     *
+     * The three describe who looks after the audience relative to the area it opens: a System
+     * cohort is managed centrally; a Home mapping stays within the branch the cohort belongs to, so
+     * the same people look after both; a Cross mapping reaches outside it, so whoever manages the
+     * cohort decides who can see an area they do not run.
+     *
+     * Always worked out from current data, never stored: deleting a category silently moves its
+     * cohorts to the parent context, which can change a mapping's type without anyone touching it.
+     *
+     * @param int $cohortid Cohort id.
+     * @param int $categoryid Mapped category id.
+     * @return string One of the TYPE_ constants.
+     */
+    public static function mapping_type(int $cohortid, int $categoryid): string {
+        $homeid = self::category_for_cohort($cohortid);
+        if (!$homeid) {
+            return self::TYPE_SYSTEM;
+        }
+
+        if ($homeid === $categoryid) {
+            return self::TYPE_HOME;
+        }
+
+        // A subcategory of the cohort's own category is still home: the same branch, the same people.
+        $category = \core_course_category::get($categoryid, IGNORE_MISSING, true);
+        if ($category) {
+            $ancestors = array_map('intval', explode('/', trim($category->path, '/')));
+            if (in_array($homeid, $ancestors, true)) {
+                return self::TYPE_HOME;
+            }
+        }
+
+        return self::TYPE_CROSS;
     }
 
     /**

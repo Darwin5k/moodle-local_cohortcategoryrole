@@ -26,7 +26,12 @@ defined('MOODLE_INTERNAL') || die();
 
 $string['actioncohorts'] = 'Manage cohorts';
 $string['actiondefineroles'] = 'Define roles';
+$string['actiondelete'] = 'Delete the mapping of {$a->cohort} to {$a->category}';
+$string['actionmaphome'] = 'Map {$a->cohort} to {$a->category}, its context category';
+$string['actionmapother'] = 'Map {$a} to another category';
 $string['actionmappings'] = 'Review mappings';
+$string['actionmapsystem'] = 'Map {$a} to a category';
+$string['actionreviewcross'] = 'Review cross mappings';
 $string['actionscheduledtasks'] = 'Scheduled tasks';
 $string['actionviewunmapped'] = 'View unmapped cohorts';
 $string['addmapping'] = 'Add mapping';
@@ -45,18 +50,18 @@ $string['checkbaseline_help'] = 'Core allows moodle/category:viewcourselist for 
 Override it to Prevent on both roles. Preventing it on Authenticated user alone still leaves every category visible to anonymous visitors wherever guest access is enabled - a hole that is invisible while testing as a logged-in user.
 
 Never use Prohibit: it cannot be overridden at a deeper context and would cancel every grant this plugin makes.';
-$string['checkcohortscope'] = 'Cohort scope';
-$string['checkcohortscope_help'] = 'Cohorts can live in a category context, and anyone holding moodle/cohort:assign there can change their membership.
-
-If such a cohort is mapped to a category outside that subtree, the people who administer the cohort can hand out access to an area they do not administer. That is legitimate - an audience maintained centrally may well open a catalogue it does not own - but it should be a decision rather than an accident, which is why it is reported.
-
-Mappings created automatically from a cohort context can never appear here, because the category comes from the cohort itself.';
 $string['checkcohortvisibility'] = 'Audience cohort visibility';
 $string['checkcohortvisibility_help'] = 'A visible cohort is offered to every course beneath its context for cohort sync enrolment, and the capability check runs against the cohort\'s own context rather than the course\'s. So any teacher below it can select the audience and enrol every member into their course.
 
 Because enrolled users always see their own courses, that also sidesteps the catalogue restriction the mapping exists to create.
 
 Edit the cohort and untick Visible. Only holders of moodle/cohort:view at the cohort\'s own context can then use it.';
+$string['checkcrossmappings'] = 'Cross mappings';
+$string['checkcrossmappings_help'] = 'Mappings whose cohort\'s context is one category but which open a category outside that branch.
+
+These are supported and often deliberate - an audience kept in one area may need to open another. They are reported because anyone who can edit the cohort, through moodle/cohort:assign in its context, can decide who sees an area they do not run, and nothing on the cohort screens shows it.
+
+If a cohort needs categories across the tree, consider moving it to the lowest category that contains all of them, or to System. Its mappings then become Home or System mappings and stop appearing here. Automatic mapping only ever creates Home mappings.';
 $string['checkmanagement'] = 'Category management roles';
 $string['checkmanagement_help'] = 'No core role allows moodle/category:viewcourselist explicitly - Manager, Course creator, Teacher and Student all inherit it from Authenticated user. Preventing it there takes it from them too.
 
@@ -100,6 +105,16 @@ $string['columnpage'] = 'Page';
 $string['columnpurpose'] = 'What it is for';
 $string['columnresult'] = 'Result';
 $string['columnstate'] = 'State';
+$string['columntype'] = 'Type';
+$string['columntype_help'] = 'System: the cohort\'s context is System, so it is managed centrally and can be mapped to any category.
+
+Home: the cohort\'s context is a category, and the mapped category is that category or one of its subcategories. Whoever manages the cohort also looks after the area it opens. Automatic mapping creates Home mappings.
+
+Cross: the cohort\'s context is a category, and the mapped category is outside that branch. Whoever manages the cohort decides who can see an area they do not run, so it deserves a deliberate decision.
+
+Unmapped: the cohort has no mapping, so its members gain nothing from it.
+
+The type is worked out from the cohort\'s current context every time, so it can change when a cohort is moved - including when Moodle moves cohorts to the parent category after a category is deleted.';
 $string['confirmdelete'] = 'Are you sure you want to delete this mapping? The role assignments it created will be removed.';
 $string['deferlimit'] = 'Defer above this many rows';
 $string['deferlimit_desc'] = 'Mappings covering more members than this are applied by the task queue instead of immediately, so that granting or releasing a large cohort cannot time out the request. Smaller mappings are applied straight away, which keeps the plugin usable on a site whose cron is not running.';
@@ -137,10 +152,11 @@ $string['reconciletask'] = 'Reconcile cohort category role assignments';
 $string['releasetask'] = 'Release cohort category role assignments';
 $string['resultallcansee'] = 'All management roles can see categories';
 $string['resultallhidden'] = 'All mapped cohorts hidden';
-$string['resultallinscope'] = 'All cohorts map within their own area';
 $string['resultallmapped'] = 'Every category cohort has a mapping';
 $string['resultallreachable'] = 'All mapped categories reachable';
 $string['resultbaselineprevented'] = 'Prevented for Authenticated user and Guest';
+$string['resultcrosscount'] = '{$a->count} cross mapping(s): {$a->cohorts}';
+$string['resultnocross'] = 'No cross mappings';
 $string['resultnonefound'] = 'None found';
 $string['resultnotapplicable'] = 'Not applicable';
 $string['resultorphancount'] = '{$a} assignment(s) with no mapping';
@@ -151,7 +167,6 @@ $string['resulttaskran'] = 'Last ran {$a} ago';
 $string['resultunmappedcount'] = '{$a} with no mapping';
 $string['returnto'] = 'Return to:';
 $string['role'] = 'Role';
-$string['scopeoutside'] = 'outside this category';
 $string['settingsintro'] = 'These pages belong to other areas of Site administration. Each link takes you there; the plugin settings page links back here, and the others can be reached again from Site administration.';
 $string['showboth'] = 'Mapped and unmapped';
 $string['showmapped'] = 'Mapped';
@@ -166,6 +181,7 @@ $string['systemcohort'] = 'System';
 $string['tabmappings'] = 'Mappings';
 $string['tabsettings'] = 'Settings';
 $string['tabstatus'] = 'Status';
+$string['typecross'] = 'Cross';
+$string['typehome'] = 'Home';
+$string['typesystem'] = 'System';
 $string['unmappedbadge'] = 'Unmapped';
-$string['unmappedmapcohort'] = 'Map this cohort';
-$string['unmappedmapthis'] = 'Map to this category';

@@ -128,7 +128,7 @@ final class diagnostics_test extends \advanced_testcase {
         $this->assertContains('task', $ids);
         $this->assertContains('mappedroles', $ids);
         $this->assertContains('cohortvisibility', $ids);
-        $this->assertContains('cohortscope', $ids);
+        $this->assertContains('crossmappings', $ids);
         $this->assertContains('unmapped', $ids);
         $this->assertContains('orphans', $ids);
         $this->assertContains('reachability', $ids);
@@ -269,11 +269,11 @@ final class diagnostics_test extends \advanced_testcase {
     }
 
     /**
-     * A cohort granting a category outside its own area is reported as a delegation leak.
+     * A cross mapping is noted - supported, but worth a deliberate look.
      *
      * @return void
      */
-    public function test_cohort_outside_its_mapped_category_is_reported(): void {
+    public function test_cross_mapping_is_noted(): void {
         $this->resetAfterTest();
         $this->prevent_baseline();
 
@@ -291,14 +291,14 @@ final class diagnostics_test extends \advanced_testcase {
 
         sync::create_mapping($cohort->id, $elsewhere->id, $roleid);
 
-        $this->assertSame(diagnostics::WARNING, $this->state('cohortscope'));
-        $this->assertStringContainsString('Local Audience', $this->summary('cohortscope'));
+        $this->assertSame(diagnostics::INFO, $this->state('crossmappings'));
+        $this->assertStringContainsString('Local Audience', $this->summary('crossmappings'));
 
         // Mapped within its own area, it is fine.
         sync::delete_mappings(['cohortid' => $cohort->id]);
         sync::create_mapping($cohort->id, $owned->id, $roleid);
 
-        $this->assertSame(diagnostics::OK, $this->state('cohortscope'));
+        $this->assertSame(diagnostics::OK, $this->state('crossmappings'));
     }
 
     /**

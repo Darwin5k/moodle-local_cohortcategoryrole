@@ -76,7 +76,7 @@ class diagnostics {
             self::check_task(),
             self::check_mapped_roles(),
             self::check_cohort_visibility(),
-            self::check_cohort_scope(),
+            self::check_cross_mappings(),
             self::check_unmapped(),
             self::check_orphans(),
             self::check_reachability(),
@@ -365,47 +365,39 @@ class diagnostics {
     }
 
     /**
-     * A cohort granting a category outside its own area is a delegation leak.
+     * Cross mappings: a category cohort granting a category outside its own branch.
+     *
+     * Legitimate and supported - an audience maintained in one area may well need to open another -
+     * so this is a note rather than a warning. It is still worth seeing, because whoever manages the
+     * cohort decides who can see an area they do not run, and nothing on the cohort screens says so.
      *
      * @return stdClass
      */
-    protected static function check_cohort_scope(): stdClass {
+    protected static function check_cross_mappings(): stdClass {
         global $DB;
 
-        $outside = [];
+        $count = 0;
+        $cohorts = [];
         foreach (sync::get_mappings() as $mapping) {
-            if (!$cohort = $DB->get_record('cohort', ['id' => $mapping->cohortid])) {
+            if (sync::mapping_type((int) $mapping->cohortid, (int) $mapping->categoryid) !== sync::TYPE_CROSS) {
                 continue;
             }
-
-            $cohortcontext = \context::instance_by_id($cohort->contextid, IGNORE_MISSING);
-            if (!$cohortcontext || $cohortcontext->contextlevel != CONTEXT_COURSECAT) {
-                continue;
+            $count++;
+            if ($name = $DB->get_field('cohort', 'name', ['id' => $mapping->cohortid])) {
+                $cohorts[$mapping->cohortid] = format_string($name);
             }
-
-            $categorycontext = context_coursecat::instance($mapping->categoryid, IGNORE_MISSING);
-            if (!$categorycontext) {
-                continue;
-            }
-
-            $ancestors = explode('/', trim($categorycontext->path, '/'));
-            if (in_array((string) $cohortcontext->id, $ancestors, true)) {
-                continue;
-            }
-
-            $outside[] = format_string($cohort->name);
         }
 
-        if (!$outside) {
-            return self::row('cohortscope', self::OK, self::str('resultallinscope'));
+        if (!$count) {
+            return self::row('crossmappings', self::OK, self::str('resultnocross'));
         }
 
         return self::row(
-            'cohortscope',
-            self::WARNING,
-            implode(', ', array_unique($outside)),
-            new moodle_url('/cohort/index.php'),
-            self::str('actioncohorts')
+            'crossmappings',
+            self::INFO,
+            self::str('resultcrosscount', (object) ['count' => $count, 'cohorts' => implode(', ', $cohorts)]),
+            new moodle_url('/local/cohortcategoryrole/index.php', ['filtertype' => sync::TYPE_CROSS]),
+            self::str('actionreviewcross')
         );
     }
 

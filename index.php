@@ -40,13 +40,18 @@ $filtercategory = optional_param('filtercategory', 0, PARAM_INT);
 $filterrole = optional_param('filterrole', 0, PARAM_INT);
 $show = optional_param('show', 'mapped', PARAM_ALPHA);
 $includesystem = optional_param('includesystem', 0, PARAM_BOOL);
+$filtertype = optional_param('filtertype', '', PARAM_ALPHA);
 
 if (!in_array($show, ['mapped', 'unmapped', 'both'], true)) {
     $show = 'mapped';
 }
 
+if (!in_array($filtertype, [sync::TYPE_SYSTEM, sync::TYPE_HOME, sync::TYPE_CROSS], true)) {
+    $filtertype = '';
+}
+
 // Arriving with a list filter means the mappings tab, even if the link did not say so.
-if (optional_param('show', '', PARAM_ALPHA) !== '') {
+if (optional_param('show', '', PARAM_ALPHA) !== '' || $filtertype !== '') {
     $tab = 'mappings';
 }
 
@@ -270,6 +275,25 @@ if ($filterrole) {
     $params['filterrole'] = $filterrole;
 }
 
+// The mapping type in SQL, mirroring sync::mapping_type() so the list can filter on it. Home is the
+// cohort's own category or anything beneath it, which is a path prefix match. The context levels are
+// integer constants, interpolated rather than bound so the same fragment can appear more than once.
+$syslevel = (int) CONTEXT_SYSTEM;
+$catlevel = (int) CONTEXT_COURSECAT;
+$ishome = "(cc.id = hc.id OR cc.path LIKE " . $DB->sql_concat('hc.path', "'/%'") . ")";
+$typesql = "CASE WHEN m.id IS NULL THEN 'unmapped'
+                 WHEN ctx.contextlevel = $syslevel THEN '" . sync::TYPE_SYSTEM . "'
+                 WHEN $ishome THEN '" . sync::TYPE_HOME . "'
+                 ELSE '" . sync::TYPE_CROSS . "' END";
+
+if ($filtertype === sync::TYPE_SYSTEM) {
+    $where[] = "m.id IS NOT NULL AND ctx.contextlevel = $syslevel";
+} else if ($filtertype === sync::TYPE_HOME) {
+    $where[] = "m.id IS NOT NULL AND ctx.contextlevel = $catlevel AND $ishome";
+} else if ($filtertype === sync::TYPE_CROSS) {
+    $where[] = "m.id IS NOT NULL AND ctx.contextlevel = $catlevel AND NOT $ishome";
+}
+
 $wheresql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
 $from = "FROM {cohort} c
@@ -284,7 +308,8 @@ $totalrows = $DB->count_records_sql("SELECT COUNT(1) $from $wheresql", $params);
 // cohort contributes exactly one row, so a negated cohort id cannot collide with one.
 $rows = $DB->get_records_sql(
     "SELECT COALESCE(m.id, -c.id) AS rowkey, c.id AS cohortid, c.name AS cohortname, c.visible,
-            ctx.contextlevel, hc.id AS homecategoryid, m.id AS mappingid, m.categoryid, m.roleid
+            ctx.contextlevel, hc.id AS homecategoryid, m.id AS mappingid, m.categoryid, m.roleid,
+            $typesql AS maptype
      $from $wheresql
      ORDER BY c.name ASC, cc.name ASC, m.id ASC",
     $params,
@@ -292,7 +317,8 @@ $rows = $DB->get_records_sql(
     $perpage
 );
 
-$filtersactive = $search !== '' || $filtercategory || $filterrole || $show !== 'mapped' || $includesystem;
+$filtersactive = $search !== '' || $filtercategory || $filterrole || $show !== 'mapped' || $includesystem
+    || $filtertype !== '';
 
 // Keep the filters on paging links.
 $filterparams = ['tab' => 'mappings', 'show' => $show];
@@ -307,6 +333,9 @@ if ($filterrole) {
 }
 if ($includesystem) {
     $filterparams['includesystem'] = 1;
+}
+if ($filtertype !== '') {
+    $filterparams['filtertype'] = $filtertype;
 }
 $pageurl = new moodle_url($baseurl, $filterparams);
 
@@ -394,6 +423,29 @@ $filterform .= html_writer::div(
     'col'
 );
 
+$typeoptions = [
+    '' => get_string('filterany', 'local_cohortcategoryrole'),
+    sync::TYPE_SYSTEM => get_string('typesystem', 'local_cohortcategoryrole'),
+    sync::TYPE_HOME => get_string('typehome', 'local_cohortcategoryrole'),
+    sync::TYPE_CROSS => get_string('typecross', 'local_cohortcategoryrole'),
+];
+$filterform .= html_writer::div(
+    html_writer::label(
+        get_string('columntype', 'local_cohortcategoryrole'),
+        'ccr_type',
+        true,
+        ['class' => 'form-label']
+    )
+    . html_writer::select(
+        $typeoptions,
+        'filtertype',
+        $filtertype,
+        false,
+        ['id' => 'ccr_type', 'class' => 'form-select']
+    ),
+    'col'
+);
+
 $systemcheckbox = ['type' => 'checkbox', 'id' => 'ccr_system', 'name' => 'includesystem', 'value' => 1,
     'class' => 'form-check-input'];
 if ($includesystem) {
@@ -433,6 +485,8 @@ $table->head = [
     get_string('cohort', 'local_cohortcategoryrole'),
     get_string('cohortcontext', 'local_cohortcategoryrole'),
     get_string('cohortvisible', 'local_cohortcategoryrole'),
+    get_string('columntype', 'local_cohortcategoryrole') . ' '
+        . $OUTPUT->help_icon('columntype', 'local_cohortcategoryrole'),
     get_string('category', 'local_cohortcategoryrole'),
     get_string('role', 'local_cohortcategoryrole'),
     get_string('membercount', 'local_cohortcategoryrole'),
@@ -441,57 +495,82 @@ $table->head = [
 ];
 $table->attributes['class'] = 'generaltable';
 
+// Cross takes the warning colour because it is the type worth a second look; the others are neutral,
+// and Unmapped is outlined so it cannot be mistaken for a grant.
+$typebadges = [
+    'unmapped' => ['unmappedbadge', 'badge bg-light text-dark border'],
+    sync::TYPE_SYSTEM => ['typesystem', 'badge bg-secondary'],
+    sync::TYPE_HOME => ['typehome', 'badge bg-secondary'],
+    sync::TYPE_CROSS => ['typecross', 'badge bg-warning text-dark'],
+];
+
+$editurl = '/local/cohortcategoryrole/edit.php';
+
 foreach ($rows as $row) {
     $homecategory = $row->homecategoryid ? ($categories[$row->homecategoryid] ?? null) : null;
+
+    // Unescaped names for icon tooltips: the icon template escapes them itself, and escaping here
+    // as well would show "&amp;" to the reader.
+    $cohortname = format_string($row->cohortname, true, ['escape' => false]);
+    $homename = $homecategory ? $homecategory->get_formatted_name(['escape' => false]) : '';
 
     $cohortcell = html_writer::link(
         new moodle_url('/cohort/edit.php', ['id' => $row->cohortid]),
         format_string($row->cohortname)
     );
 
-    // The cohort's context: System, or the category it lives in.
-    $contextcell = get_string('systemcohort', 'local_cohortcategoryrole');
-    if ($homecategory) {
-        $contextcell = $homecategory->get_formatted_name();
-        if ($row->mappingid && (int) $row->homecategoryid !== (int) $row->categoryid) {
-            $contextcell .= ' ' . html_writer::tag(
-                'span',
-                get_string('scopeoutside', 'local_cohortcategoryrole'),
-                ['class' => 'badge bg-warning text-dark']
-            );
-        }
-    }
+    $contextcell = $homecategory
+        ? $homecategory->get_formatted_name()
+        : get_string('systemcohort', 'local_cohortcategoryrole');
+
+    [$typestring, $typeclass] = $typebadges[$row->maptype] ?? $typebadges[sync::TYPE_CROSS];
+    $typecell = html_writer::tag('span', get_string($typestring, 'local_cohortcategoryrole'), ['class' => $typeclass]);
 
     $visiblecell = $row->visible ? get_string('yes') : get_string('no');
     $members = isset($membercounts[$row->cohortid]) ? $membercounts[$row->cohortid]->total : 0;
 
+    // Every action is an icon whose tooltip names the actual cohort and category, so the icon carries
+    // its full meaning without taking a column's worth of text.
+    $actions = [];
+
     if (!$row->mappingid) {
-        // An unmapped cohort grants nothing, so it must not look like a mapping.
-        $prefill = ['cohortid' => $row->cohortid];
-        $actionlabel = get_string('unmappedmapcohort', 'local_cohortcategoryrole');
-        if ($row->homecategoryid) {
-            $prefill['categoryid'] = $row->homecategoryid;
-            $actionlabel = get_string('unmappedmapthis', 'local_cohortcategoryrole');
+        if ($homecategory) {
+            $actions[] = $OUTPUT->action_icon(
+                new moodle_url($editurl, ['cohortid' => $row->cohortid, 'categoryid' => $row->homecategoryid]),
+                new pix_icon('t/add', get_string(
+                    'actionmaphome',
+                    'local_cohortcategoryrole',
+                    (object) ['cohort' => $cohortname, 'category' => $homename]
+                ))
+            );
+            $actions[] = $OUTPUT->action_icon(
+                new moodle_url($editurl, ['cohortid' => $row->cohortid]),
+                new pix_icon('i/link', get_string('actionmapother', 'local_cohortcategoryrole', $cohortname))
+            );
+        } else {
+            $actions[] = $OUTPUT->action_icon(
+                new moodle_url($editurl, ['cohortid' => $row->cohortid]),
+                new pix_icon('t/add', get_string('actionmapsystem', 'local_cohortcategoryrole', $cohortname))
+            );
         }
 
         $table->data[] = [
             $cohortcell,
             $contextcell,
             $visiblecell,
+            $typecell,
             '-',
-            html_writer::tag(
-                'span',
-                get_string('unmappedbadge', 'local_cohortcategoryrole'),
-                ['class' => 'badge bg-secondary']
-            ),
+            '-',
             $members,
             '-',
-            html_writer::link(new moodle_url('/local/cohortcategoryrole/edit.php', $prefill), $actionlabel),
+            implode(' ', $actions),
         ];
         continue;
     }
 
     $category = $categories[$row->categoryid] ?? null;
+    $categoryname = $category ? $category->get_formatted_name(['escape' => false]) : '';
+
     $categorycell = '-';
     if ($category) {
         $categorycell = html_writer::link(
@@ -508,22 +587,29 @@ foreach ($rows as $row) {
         );
     }
 
-    $deleteicon = $OUTPUT->action_icon(
+    $actions[] = $OUTPUT->action_icon(
+        new moodle_url($editurl, ['cohortid' => $row->cohortid]),
+        new pix_icon('i/link', get_string('actionmapother', 'local_cohortcategoryrole', $cohortname))
+    );
+    $actions[] = $OUTPUT->action_icon(
         new moodle_url($baseurl, ['delete' => $row->mappingid]),
-        new pix_icon('t/delete', get_string('delete')),
-        null,
-        ['aria-label' => get_string('deletemapping', 'local_cohortcategoryrole')]
+        new pix_icon('t/delete', get_string(
+            'actiondelete',
+            'local_cohortcategoryrole',
+            (object) ['cohort' => $cohortname, 'category' => $categoryname]
+        ))
     );
 
     $table->data[] = [
         $cohortcell,
         $contextcell,
         $visiblecell,
+        $typecell,
         $categorycell,
         $rolecell,
         $members,
         isset($assignmentcounts[$row->mappingid]) ? $assignmentcounts[$row->mappingid]->total : 0,
-        $deleteicon,
+        implode(' ', $actions),
     ];
 }
 

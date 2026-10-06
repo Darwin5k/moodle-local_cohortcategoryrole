@@ -215,7 +215,7 @@ final class automap_test extends \advanced_testcase {
         $this->create_cohort_in(context_coursecat::instance($category->id)->id);
 
         foreach (local\diagnostics::run() as $row) {
-            if ($row->id === 'cohortscope') {
+            if ($row->id === 'crossmappings') {
                 $this->assertSame(local\diagnostics::OK, $row->state);
                 return;
             }

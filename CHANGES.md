@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0 (2026-10-05)
+
+### Added
+
+- **Mapping types: System, Home and Cross**, shown as a badge in a new **Type** column whose help
+  icon defines them. *System*: the cohort's context is System, so it is managed centrally. *Home*:
+  the cohort's context is a category and the mapped category is that category or beneath it, so the
+  same people look after both. *Cross*: the mapped category is outside that branch, so whoever
+  manages the cohort decides who can see an area they do not run. Cross takes the warning colour.
+  The type is worked out from current data every time, because Moodle silently moves cohorts to the
+  parent category when a category is deleted, which can change a mapping's type.
+- A **Type** filter, so the Cross mappings can be listed on their own for an audit.
+- **Map to another category** on every row, mapped or not, so further mappings for a cohort can be
+  added from its own row.
+
+### Changed
+
+- **Row actions are icons**, each with a tooltip naming the actual cohort and category - "Map Sales
+  Contractors to Sales Training, its context category" - which doubles as the screen reader label.
+- Unmapped rows show their **Unmapped** badge in the Type column rather than the Role column.
+- The Status check **Cohort scope** is now **Cross mappings**, and is a note rather than a warning:
+  cross mappings are a supported, named type, and a Status badge count should not include them. It
+  links to the list filtered to Cross.
+- The "outside this category" badge is replaced by the Cross type.
+
 ## 0.7.0 (2026-10-05)
 
 ### Changed

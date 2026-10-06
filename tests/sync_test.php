@@ -202,6 +202,66 @@ final class sync_test extends \advanced_testcase {
     }
 
     /**
+     * Mappings are classified as System, Home or Cross from the cohort's current context.
+     *
+     * @return void
+     */
+    public function test_mapping_type(): void {
+        $this->resetAfterTest();
+
+        $sales = $this->getDataGenerator()->create_category(['name' => 'Sales']);
+        $advanced = $this->getDataGenerator()->create_category(['name' => 'Advanced', 'parent' => $sales->id]);
+        $engineering = $this->getDataGenerator()->create_category(['name' => 'Engineering']);
+
+        $systemcohort = $this->getDataGenerator()->create_cohort([
+            'contextid' => \context_system::instance()->id,
+        ]);
+        $salescohort = $this->getDataGenerator()->create_cohort([
+            'contextid' => context_coursecat::instance($sales->id)->id,
+        ]);
+
+        // A system cohort is centrally managed, so every mapping it has is a System mapping.
+        $this->assertSame(sync::TYPE_SYSTEM, sync::mapping_type($systemcohort->id, $sales->id));
+        $this->assertSame(sync::TYPE_SYSTEM, sync::mapping_type($systemcohort->id, $engineering->id));
+
+        // Its own category, and anything beneath it, is Home: the same branch, the same managers.
+        $this->assertSame(sync::TYPE_HOME, sync::mapping_type($salescohort->id, $sales->id));
+        $this->assertSame(sync::TYPE_HOME, sync::mapping_type($salescohort->id, $advanced->id));
+
+        // Anywhere outside that branch is Cross.
+        $this->assertSame(sync::TYPE_CROSS, sync::mapping_type($salescohort->id, $engineering->id));
+    }
+
+    /**
+     * A mapping's type follows the cohort when Moodle moves it after its category is deleted.
+     *
+     * Deleting a category moves its cohorts to the parent context with no event, so the type must
+     * be worked out from current data rather than stored.
+     *
+     * @return void
+     */
+    public function test_mapping_type_follows_a_moved_cohort(): void {
+        $this->resetAfterTest();
+        $this->setAdminUser();
+
+        $parent = $this->getDataGenerator()->create_category(['name' => 'Parent']);
+        $child = $this->getDataGenerator()->create_category(['name' => 'Child', 'parent' => $parent->id]);
+        $sibling = $this->getDataGenerator()->create_category(['name' => 'Sibling', 'parent' => $parent->id]);
+
+        $cohort = $this->getDataGenerator()->create_cohort([
+            'contextid' => context_coursecat::instance($child->id)->id,
+        ]);
+
+        $this->assertSame(sync::TYPE_CROSS, sync::mapping_type($cohort->id, $sibling->id));
+
+        // Core moves the cohort up to the parent's context.
+        \core_course_category::get($child->id)->delete_full(false);
+
+        // Sibling now sits beneath the cohort's context, so the same pairing is Home.
+        $this->assertSame(sync::TYPE_HOME, sync::mapping_type($cohort->id, $sibling->id));
+    }
+
+    /**
      * Runs queued tasks of one class, swallowing their progress output.
      *
      * @param string $classname
