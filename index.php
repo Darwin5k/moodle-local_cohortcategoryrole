@@ -94,7 +94,7 @@ foreach ($checks as $check) {
 // The status tab carries a count, so a problem is visible from the mappings tab without leaving it.
 $statuslabel = get_string('tabstatus', 'local_cohortcategoryrole');
 if ($problems) {
-    $statuslabel .= ' ' . html_writer::tag('span', $problems, ['class' => 'badge bg-warning text-dark']);
+    $statuslabel .= ' ' . html_writer::tag('span', $problems, ['class' => 'badge text-bg-warning']);
 }
 
 $tabs = [
@@ -117,10 +117,10 @@ echo $OUTPUT->tabtree($tabs, $tab);
 
 if ($tab === 'status') {
     $badges = [
-        diagnostics::OK => 'bg-success',
-        diagnostics::INFO => 'bg-info',
-        diagnostics::WARNING => 'bg-warning text-dark',
-        diagnostics::ERROR => 'bg-danger',
+        diagnostics::OK => 'text-bg-success',
+        diagnostics::INFO => 'text-bg-info',
+        diagnostics::WARNING => 'text-bg-warning',
+        diagnostics::ERROR => 'text-bg-danger',
     ];
 
     $statustable = new html_table();
@@ -495,13 +495,14 @@ $table->head = [
 ];
 $table->attributes['class'] = 'generaltable';
 
-// Cross takes the warning colour because it is the type worth a second look; the others are neutral,
-// and Unmapped is outlined so it cannot be mistaken for a grant.
+// One colour per type. text-bg-* picks a readable text colour for each background - Boost's
+// "secondary" is a light grey that fails contrast with white text, so it is avoided. Cross keeps the
+// warning colour as the type worth a second look; Unmapped is outlined so it cannot pass for a grant.
 $typebadges = [
-    'unmapped' => ['unmappedbadge', 'badge bg-light text-dark border'],
-    sync::TYPE_SYSTEM => ['typesystem', 'badge bg-secondary'],
-    sync::TYPE_HOME => ['typehome', 'badge bg-secondary'],
-    sync::TYPE_CROSS => ['typecross', 'badge bg-warning text-dark'],
+    'unmapped' => ['unmappedbadge', 'badge text-bg-light border'],
+    sync::TYPE_SYSTEM => ['typesystem', 'badge text-bg-primary'],
+    sync::TYPE_HOME => ['typehome', 'badge text-bg-success'],
+    sync::TYPE_CROSS => ['typecross', 'badge text-bg-warning'],
 ];
 
 $editurl = '/local/cohortcategoryrole/edit.php';
