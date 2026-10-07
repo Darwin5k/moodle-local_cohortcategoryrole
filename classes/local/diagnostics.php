@@ -37,9 +37,11 @@ use stdClass;
  *
  * Every problem these look for produces no error and no log entry - the site simply grants or
  * withholds the wrong access. So this is written as a report: every check returns a row whatever
- * its state. Each row states a requirement - what must be true, and why - which is always shown,
- * so a healthy site reads as a reference card. When the requirement is not met the row adds what
- * was found, and where it is safe, a fix the administrator can apply after confirming.
+ * its state. Each row states a requirement - what must be true, and why - which is always shown.
+ *
+ * When a requirement is not met the row says how many things are affected, never which: on a large
+ * site a list would swamp the page. The items themselves travel with the row, for a detail view or
+ * a filtered list one click away, and where it is safe the row offers a fix.
  *
  * Requirement and reason text live in check{id}_requirement and check{id}_why; the longer
  * explanation lives in check{id}_help, behind a help icon.
@@ -74,8 +76,9 @@ class diagnostics {
     /**
      * Runs every check and returns one row each, in reading order.
      *
-     * @return stdClass[] Each with ->id, ->state, ->found (null when met), ->fix (a fixer action or
-     *                    null), and optionally ->actionurl and ->actionlabel.
+     * @return stdClass[] Each with ->id, ->state, ->found (a count, or null when met), ->items (the
+     *                    affected things, each ->label and ->url), ->detailurl, ->fix, ->actionurl
+     *                    and ->actionlabel.
      */
     public static function run(): array {
         return [
@@ -90,6 +93,22 @@ class diagnostics {
             self::check_orphans(),
             self::check_reachability(),
         ];
+    }
+
+    /**
+     * Runs one check by id.
+     *
+     * @param string $id
+     * @return stdClass|null
+     */
+    public static function get(string $id): ?stdClass {
+        foreach (self::run() as $row) {
+            if ($row->id === $id) {
+                return $row;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -208,27 +227,39 @@ class diagnostics {
      *
      * @param string $id Check identifier, also the language string prefix.
      * @param string $state One of the class constants.
-     * @param string|null $found What was found, already translated; null when the requirement is met.
-     * @param moodle_url|null $actionurl Where to deal with it by hand.
-     * @param string|null $actionlabel Already translated link text.
+     * @param string|null $found How many things are affected, translated; null when the requirement is met.
+     * @param array $items The affected things, each ['label' => string, 'url' => moodle_url|null].
      * @param string|null $fix A fixer action that can deal with it.
+     * @param moodle_url|null $actionurl Where to deal with it by hand.
+     * @param string|null $actionlabel Translated link text for $actionurl.
+     * @param moodle_url|null $listurl A filtered list that already shows the detail, used instead
+     *                                 of the generic detail view.
      * @return stdClass
      */
     protected static function row(
         string $id,
         string $state,
         ?string $found = null,
+        array $items = [],
+        ?string $fix = null,
         ?moodle_url $actionurl = null,
         ?string $actionlabel = null,
-        ?string $fix = null
+        ?moodle_url $listurl = null
     ): stdClass {
+        $detailurl = $listurl;
+        if (!$detailurl && $items) {
+            $detailurl = new moodle_url('/local/cohortcategoryrole/index.php', ['tab' => 'status', 'check' => $id]);
+        }
+
         return (object) [
             'id' => $id,
             'state' => $state,
             'found' => $found,
+            'items' => array_map(fn($item) => (object) $item, $items),
+            'detailurl' => $detailurl,
+            'fix' => $fix,
             'actionurl' => $actionurl,
             'actionlabel' => $actionlabel,
-            'fix' => $fix,
         ];
     }
 
@@ -244,6 +275,20 @@ class diagnostics {
     }
 
     /**
+     * An item linking to a role's definition.
+     *
+     * @param stdClass $role
+     * @param string|null $label Defaults to the role name.
+     * @return array
+     */
+    protected static function role_item(stdClass $role, ?string $label = null): array {
+        return [
+            'label' => $label ?? role_get_name($role),
+            'url' => new moodle_url('/admin/roles/define.php', ['action' => 'view', 'roleid' => $role->id]),
+        ];
+    }
+
+    /**
      * Is the site-wide default allow still in place for either archetype role?
      *
      * @return stdClass
@@ -254,21 +299,22 @@ class diagnostics {
             return self::row('baseline', self::OK);
         }
 
-        $found = [];
+        $items = [];
         foreach ($roles as $role) {
-            $found[] = self::str('foundroleperm', (object) [
+            $items[] = self::role_item($role, self::str('foundroleperm', (object) [
                 'role' => role_get_name($role),
                 'permission' => self::permission_name(CAP_ALLOW),
-            ]);
+            ]));
         }
 
         return self::row(
             'baseline',
             self::WARNING,
-            implode(', ', $found),
+            self::str('foundbaselinecount', count($roles)),
+            $items,
+            'baseline',
             new moodle_url('/admin/roles/manage.php'),
-            self::str('actiondefineroles'),
-            'baseline'
+            self::str('actiondefineroles')
         );
     }
 
@@ -292,10 +338,11 @@ class diagnostics {
         return self::row(
             'management',
             self::WARNING,
-            implode(', ', array_map('role_get_name', $roles)),
+            self::str('foundmanagementcount', count($roles)),
+            array_map(fn($role) => self::role_item($role), $roles),
+            'management',
             new moodle_url('/admin/roles/manage.php'),
-            self::str('actiondefineroles'),
-            'management'
+            self::str('actiondefineroles')
         );
     }
 
@@ -312,26 +359,40 @@ class diagnostics {
                   JOIN {role} r ON r.id = rc.roleid
                  WHERE rc.capability = :cap AND rc.permission = :prohibit";
 
-        $found = [];
+        $items = [];
         foreach ($DB->get_records_sql($sql, ['cap' => self::CAPABILITY, 'prohibit' => CAP_PROHIBIT]) as $record) {
             $context = \context::instance_by_id($record->contextid, IGNORE_MISSING);
-            // Table cells render raw, so never pass a database value straight through.
-            // role_get_name() applies format_string.
-            $found[] = role_get_name((object) [
+            // Rendered raw, so never pass a database value straight through. role_get_name()
+            // applies format_string.
+            $rolename = role_get_name((object) [
                 'id' => $record->roleid,
                 'name' => $record->name,
                 'shortname' => $record->shortname,
-            ]) . ' (' . ($context ? $context->get_context_name(false) : '?') . ')';
+            ]);
+
+            // A Prohibit in the role definition is changed on Define roles; one at a deeper context
+            // is an override, changed on that context's permissions page.
+            $url = new moodle_url('/admin/roles/define.php', ['action' => 'view', 'roleid' => $record->roleid]);
+            if ($context && $context->contextlevel != CONTEXT_SYSTEM) {
+                $url = new moodle_url('/admin/roles/permissions.php', ['contextid' => $context->id]);
+            }
+
+            $items[] = [
+                'label' => $rolename . ' (' . ($context ? $context->get_context_name(false) : '?') . ')',
+                'url' => $url,
+            ];
         }
 
-        if (!$found) {
+        if (!$items) {
             return self::row('prohibit', self::OK);
         }
 
         return self::row(
             'prohibit',
             self::ERROR,
-            implode(', ', $found),
+            self::str('foundprohibitcount', count($items)),
+            $items,
+            null,
             new moodle_url('/admin/roles/manage.php'),
             self::str('actiondefineroles')
         );
@@ -355,9 +416,10 @@ class diagnostics {
                 'task',
                 self::WARNING,
                 self::str('foundtaskdisabled'),
+                [],
+                'reconcile',
                 $tasksurl,
-                self::str('actionscheduledtasks'),
-                'reconcile'
+                self::str('actionscheduledtasks')
             );
         }
 
@@ -367,9 +429,10 @@ class diagnostics {
                 'task',
                 self::INFO,
                 self::str('foundtasknever'),
+                [],
+                'reconcile',
                 $tasksurl,
-                self::str('actionscheduledtasks'),
-                'reconcile'
+                self::str('actionscheduledtasks')
             );
         }
 
@@ -378,9 +441,10 @@ class diagnostics {
                 'task',
                 self::WARNING,
                 self::str('foundtaskstale', format_time(time() - $lastrun)),
+                [],
+                'reconcile',
                 $tasksurl,
-                self::str('actionscheduledtasks'),
-                'reconcile'
+                self::str('actionscheduledtasks')
             );
         }
 
@@ -400,7 +464,7 @@ class diagnostics {
             $roleids[(int) $mapping->roleid] = true;
         }
 
-        $dangerous = [];
+        $items = [];
         foreach (array_keys($roleids) as $roleid) {
             $mass = $DB->record_exists('role_capabilities', [
                 'roleid' => $roleid,
@@ -408,18 +472,20 @@ class diagnostics {
                 'permission' => CAP_ALLOW,
             ]);
             if ($mass && $role = $DB->get_record('role', ['id' => $roleid])) {
-                $dangerous[] = role_get_name($role);
+                $items[] = self::role_item($role);
             }
         }
 
-        if (!$dangerous) {
+        if (!$items) {
             return self::row('mappedroles', self::OK);
         }
 
         return self::row(
             'mappedroles',
             self::ERROR,
-            implode(', ', $dangerous),
+            self::str('foundmappedrolescount', count($items)),
+            $items,
+            null,
             new moodle_url('/admin/roles/manage.php'),
             self::str('actiondefineroles')
         );
@@ -431,19 +497,26 @@ class diagnostics {
      * @return stdClass
      */
     protected static function check_cohort_visibility(): stdClass {
-        $visible = array_map(fn($cohort) => format_string($cohort->name), self::visible_mapped_cohorts());
+        $items = [];
+        foreach (self::visible_mapped_cohorts() as $cohort) {
+            $items[] = [
+                'label' => format_string($cohort->name),
+                'url' => new moodle_url('/cohort/edit.php', ['id' => $cohort->id]),
+            ];
+        }
 
-        if (!$visible) {
+        if (!$items) {
             return self::row('cohortvisibility', self::OK);
         }
 
         return self::row(
             'cohortvisibility',
             self::WARNING,
-            implode(', ', $visible),
+            self::str('foundvisiblecount', count($items)),
+            $items,
+            'cohortvisibility',
             new moodle_url('/cohort/index.php'),
-            self::str('actioncohorts'),
-            'cohortvisibility'
+            self::str('actioncohorts')
         );
     }
 
@@ -451,35 +524,37 @@ class diagnostics {
      * Cross mappings: a category cohort granting a category outside its own branch.
      *
      * Legitimate and supported, so a note rather than a warning - but worth seeing, because whoever
-     * manages the cohort decides who sees an area they do not run.
+     * manages the cohort decides who sees an area they do not run. The detail is the mappings list
+     * filtered to Cross, which already shows each one with its context, category and role.
      *
      * @return stdClass
      */
     protected static function check_cross_mappings(): stdClass {
-        global $DB;
-
-        $count = 0;
+        $mappings = 0;
         $cohorts = [];
         foreach (sync::get_mappings() as $mapping) {
             if (sync::mapping_type((int) $mapping->cohortid, (int) $mapping->categoryid) !== sync::TYPE_CROSS) {
                 continue;
             }
-            $count++;
-            if ($name = $DB->get_field('cohort', 'name', ['id' => $mapping->cohortid])) {
-                $cohorts[$mapping->cohortid] = format_string($name);
-            }
+            $mappings++;
+            $cohorts[(int) $mapping->cohortid] = true;
         }
 
-        if (!$count) {
+        if (!$mappings) {
             return self::row('crossmappings', self::OK);
         }
 
+        // Counted as mappings across cohorts: one cohort can hold several cross mappings, and a bare
+        // number would leave a reader wondering which it counted.
         return self::row(
             'crossmappings',
             self::INFO,
-            self::str('foundcross', (object) ['count' => $count, 'cohorts' => implode(', ', $cohorts)]),
-            new moodle_url('/local/cohortcategoryrole/index.php', ['filtertype' => sync::TYPE_CROSS]),
-            self::str('actionreviewcross')
+            self::str('foundcross', (object) ['mappings' => $mappings, 'cohorts' => count($cohorts)]),
+            [],
+            null,
+            null,
+            null,
+            new moodle_url('/local/cohortcategoryrole/index.php', ['filtertype' => sync::TYPE_CROSS])
         );
     }
 
@@ -509,8 +584,11 @@ class diagnostics {
             'unmapped',
             self::INFO,
             self::str('foundunmapped', $count),
-            new moodle_url('/local/cohortcategoryrole/index.php', ['show' => 'unmapped']),
-            self::str('actionviewunmapped')
+            [],
+            null,
+            null,
+            null,
+            new moodle_url('/local/cohortcategoryrole/index.php', ['show' => 'unmapped'])
         );
     }
 
@@ -526,7 +604,7 @@ class diagnostics {
             return self::row('orphans', self::OK);
         }
 
-        return self::row('orphans', self::WARNING, self::str('foundorphans', $orphans), null, null, 'orphans');
+        return self::row('orphans', self::WARNING, self::str('foundorphans', $orphans), [], 'orphans');
     }
 
     /**
@@ -537,9 +615,13 @@ class diagnostics {
     protected static function check_reachability(): stdClass {
         global $DB;
 
-        $unreachable = [];
+        $items = [];
 
         foreach (sync::get_mappings() as $mapping) {
+            if (isset($items[$mapping->categoryid])) {
+                continue;
+            }
+
             $category = core_course_category::get($mapping->categoryid, IGNORE_MISSING, true);
             if (!$category || !$category->parent) {
                 continue;
@@ -561,24 +643,32 @@ class diagnostics {
                 }
                 $parentcontext = context_coursecat::instance($parent->id, IGNORE_MISSING);
                 if ($parentcontext && !has_capability(self::CAPABILITY, $parentcontext, $member)) {
-                    $unreachable[$category->id] = self::str('foundunreachable', (object) [
-                        'category' => $category->get_formatted_name(),
-                        'parent' => $parent->get_formatted_name(),
-                    ]);
+                    $items[$category->id] = [
+                        'label' => self::str('foundunreachable', (object) [
+                            'category' => $category->get_formatted_name(),
+                            'parent' => $parent->get_formatted_name(),
+                        ]),
+                        'url' => new moodle_url(
+                            '/local/cohortcategoryrole/index.php',
+                            ['filtercategory' => $category->id]
+                        ),
+                    ];
                     break;
                 }
                 $parentid = $parent->parent;
             }
         }
 
-        if (!$unreachable) {
+        if (!$items) {
             return self::row('reachability', self::OK);
         }
 
         return self::row(
             'reachability',
             self::WARNING,
-            implode(', ', $unreachable),
+            self::str('foundunreachablecount', count($items)),
+            array_values($items),
+            null,
             new moodle_url('/local/cohortcategoryrole/index.php'),
             self::str('actionmappings')
         );

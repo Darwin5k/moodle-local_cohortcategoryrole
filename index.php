@@ -124,6 +124,45 @@ if ($tab === 'status') {
         diagnostics::ERROR => 'text-bg-danger',
     ];
 
+    $fixbutton = function (stdClass $check): string {
+        if (!$check->fix || !fixer::can_apply($check->fix)) {
+            return '';
+        }
+        return html_writer::link(
+            new moodle_url('/local/cohortcategoryrole/fix.php', ['action' => $check->fix]),
+            fixer::label($check->fix),
+            ['class' => 'btn btn-primary btn-sm mb-1']
+        );
+    };
+
+    // Detail for one check: the items behind its count, each linked to the screen that changes it.
+    $detailid = optional_param('check', '', PARAM_ALPHA);
+    if ($detailid !== '' && ($check = diagnostics::get($detailid)) && $check->items) {
+        $statusurl = new moodle_url($baseurl, ['tab' => 'status']);
+
+        echo $OUTPUT->heading(get_string('check' . $check->id, 'local_cohortcategoryrole'), 3);
+        echo html_writer::div(
+            get_string('check' . $check->id . '_requirement', 'local_cohortcategoryrole'),
+            'fw-semibold'
+        );
+        echo html_writer::div(get_string('check' . $check->id . '_why', 'local_cohortcategoryrole'), 'text-muted mb-3');
+
+        $items = [];
+        foreach ($check->items as $item) {
+            $items[] = $item->url ? html_writer::link($item->url, $item->label) : $item->label;
+        }
+        echo html_writer::tag('p', html_writer::tag('strong', get_string('foundlabel', 'local_cohortcategoryrole'))
+            . ' ' . $check->found);
+        echo html_writer::alist($items);
+
+        echo html_writer::div(
+            $fixbutton($check) . ' ' . html_writer::link($statusurl, get_string('backtostatus', 'local_cohortcategoryrole')),
+            'mt-3'
+        );
+        echo $OUTPUT->footer();
+        die();
+    }
+
     $statustable = new html_table();
     $statustable->head = [
         get_string('columncheck', 'local_cohortcategoryrole'),
@@ -144,7 +183,8 @@ if ($tab === 'status') {
         );
 
         // The requirement is always shown, so a healthy site doubles as a reference card for how
-        // things should be set. What was found is added only when the requirement is not met.
+        // things should be set. When it is not met, only a count is added - never the list itself,
+        // which on a large site would swamp the page. The list is one click away.
         $requirement = html_writer::div(
             get_string('check' . $check->id . '_requirement', 'local_cohortcategoryrole'),
             'fw-semibold'
@@ -161,12 +201,11 @@ if ($tab === 'status') {
         }
 
         $actions = [];
-        if ($check->fix && fixer::can_apply($check->fix)) {
-            $actions[] = html_writer::link(
-                new moodle_url('/local/cohortcategoryrole/fix.php', ['action' => $check->fix]),
-                fixer::label($check->fix),
-                ['class' => 'btn btn-primary btn-sm mb-1']
-            );
+        if ($button = $fixbutton($check)) {
+            $actions[] = $button;
+        }
+        if ($check->detailurl) {
+            $actions[] = html_writer::link($check->detailurl, get_string('viewdetails', 'local_cohortcategoryrole'));
         }
         if ($check->actionurl) {
             $actions[] = html_writer::link($check->actionurl, $check->actionlabel);

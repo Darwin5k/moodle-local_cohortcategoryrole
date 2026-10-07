@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.10.0 (2026-10-07)
+
+### Changed
+
+- **Status rows report counts, not lists.** "3 visible cohort(s)", "1 cross mapping(s) across 1
+  cohort(s)". A list of names would swamp the page on a site with hundreds of cohorts; the Status
+  page now says how much needs attention and where to look.
+- Cross mappings are counted as mappings *across* cohorts, since one cohort can hold several and a
+  bare number left it unclear which was being counted.
+
+### Added
+
+- **View details** on every row with a count. Cross mappings and unmapped cohorts link to the
+  Mappings list, filtered. Every other row opens a detail view listing each affected item, linked
+  to the exact screen that changes it - a role's definition, a cohort's edit page, the permissions
+  page of the context holding a Prohibit override - with the row's Fix button alongside.
+- `cli/reconcile.php --checks` lists the items under each count, since a terminal has room for them.
+
 ## 0.9.0 (2026-10-06)
 
 ### Changed

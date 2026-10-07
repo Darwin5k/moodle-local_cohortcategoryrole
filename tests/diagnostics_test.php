@@ -73,7 +73,9 @@ final class diagnostics_test extends \advanced_testcase {
     protected function summary(string $id): string {
         foreach (diagnostics::run() as $row) {
             if ($row->id === $id) {
-                return (string) $row->found;
+                // The count, followed by the items behind it, so a test can check both.
+                $labels = array_map(fn($item) => $item->label, $row->items);
+                return trim((string) $row->found . ' ' . implode(', ', $labels));
             }
         }
         $this->fail('No check reported with id ' . $id);
@@ -176,6 +178,38 @@ final class diagnostics_test extends \advanced_testcase {
                 );
             }
         }
+    }
+
+    /**
+     * A row reports how many things are affected, never which; the items travel with it for the
+     * detail view.
+     *
+     * A list in the row itself would swamp the Status page on a site with hundreds of cohorts.
+     *
+     * @return void
+     */
+    public function test_found_is_a_count_and_items_are_kept_for_detail(): void {
+        $this->resetAfterTest();
+        $this->prevent_baseline();
+
+        $category = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+        foreach (['First Audience', 'Second Audience'] as $name) {
+            $cohort = $this->getDataGenerator()->create_cohort(['name' => $name, 'visible' => 1]);
+            sync::create_mapping($cohort->id, $category->id, $roleid);
+        }
+
+        $row = diagnostics::get('cohortvisibility');
+
+        $this->assertSame('2 visible cohort(s)', $row->found);
+        $this->assertStringNotContainsString('First Audience', $row->found);
+
+        $labels = array_map(fn($item) => $item->label, $row->items);
+        $this->assertSame(['First Audience', 'Second Audience'], $labels);
+        $this->assertNotNull($row->items[0]->url);
+
+        // The detail view is where the names live.
+        $this->assertStringContainsString('check=cohortvisibility', $row->detailurl->out(false));
     }
 
     /**
@@ -307,7 +341,8 @@ final class diagnostics_test extends \advanced_testcase {
         sync::create_mapping($cohort->id, $elsewhere->id, $roleid);
 
         $this->assertSame(diagnostics::INFO, $this->state('crossmappings'));
-        $this->assertStringContainsString('Local Audience', $this->summary('crossmappings'));
+        $this->assertStringContainsString('1 cross mapping(s) across 1 cohort(s)', $this->summary('crossmappings'));
+        $this->assertStringNotContainsString('Local Audience', $this->summary('crossmappings'));
 
         // Mapped within its own area, it is fine.
         sync::delete_mappings(['cohortid' => $cohort->id]);

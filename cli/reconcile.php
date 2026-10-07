@@ -74,6 +74,10 @@ if ($options['checks']) {
         if ($check->found !== null) {
             $found = html_to_text($check->found, 0, false);
             cli_writeln('    ' . get_string('foundlabel', 'local_cohortcategoryrole') . ' ' . $found);
+            // A terminal has room for the items the web page leaves to a detail view.
+            foreach ($check->items as $item) {
+                cli_writeln('      - ' . html_to_text($item->label, 0, false));
+            }
         }
     }
 
