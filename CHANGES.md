@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.0.0-beta (2026-10-07)
+
+This is the first public release, for review and early adopters on Moodle 5.1.
+
+### Changed
+
+- **The Status checks run only on the Status tab.** The badge and notice on other tabs read a
+  summary cached for up to five minutes, in a new `status` application cache. Creating or deleting
+  a mapping clears it, and so does any fix. On a site with 300 mappings, this saves about 1.5 s and
+  1,500 queries on every Mappings and Settings page load.
+- **Faster checks.**
+  - *Cross mappings* and *Mapped role safety* are now one query each.
+  - *Category reachability* batches its category and user loads, and memoizes capability checks.
+  - Together these halve the cost of the Status tab.
+- **Mappings list** counts members and role assignments only for the rows on the current page, not
+  site-wide.
+- **The add-mapping form** uses Moodle's searchable cohort picker, so it no longer loads every cohort
+  on the site.
+- **Validation** now confirms the chosen cohort, category and role still exist when the form is
+  submitted.
+- **Synchronisation** diffs member lists by key, which is linear rather than quadratic in cohort
+  size.
+- The System, Home and Cross classification has a single SQL definition, shared by the Mappings
+  list and the checks. A test proves it agrees with the PHP one.
+- The `local/cohortcategoryrole:manage` capability now declares `RISK_XSS`, matching core's
+  `moodle/role:assign`.
+
+### Added
+
+- **Documentation:**
+  - an [administrator guide](docs/ADMIN_GUIDE.md) that explains the Moodle concepts involved from
+    scratch;
+  - [developer notes](docs/DEVELOPER.md) covering architecture, the verified core behaviours,
+    performance and limits.
+- A GitHub Actions workflow running the full moodle-plugin-ci suite.
+- The GPL v3 licence text.
+
 ## 0.10.0 (2026-10-07)
 
 ### Changed
