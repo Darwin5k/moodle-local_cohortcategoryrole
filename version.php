@@ -25,7 +25,8 @@
 defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_cohortcategoryrole';
-$plugin->version   = 2026100700;
+$plugin->version   = 2026100701;
 $plugin->requires  = 2025100600;
-$plugin->maturity  = MATURITY_ALPHA;
-$plugin->release   = '0.10.0';
+$plugin->supported = [501, 501];
+$plugin->maturity  = MATURITY_BETA;
+$plugin->release   = '1.0.0-beta';

@@ -198,6 +198,8 @@ class fixer {
                 break;
         }
 
+        diagnostics::invalidate_summary();
+
         return $done;
     }
 

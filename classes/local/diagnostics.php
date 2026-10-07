@@ -27,7 +27,6 @@ namespace local_cohortcategoryrole\local;
 use context_coursecat;
 use context_system;
 use core_course_category;
-use core_user;
 use local_cohortcategoryrole\task\reconcile;
 use moodle_url;
 use stdClass;
@@ -93,6 +92,52 @@ class diagnostics {
             self::check_orphans(),
             self::check_reachability(),
         ];
+    }
+
+    /**
+     * Returns how many checks need attention, and the worst state, from cache where possible.
+     *
+     * For the badge and notice on tabs other than Status. Running every check costs a query or more
+     * per mapping, which on a large site is seconds per page; this costs nothing once cached.
+     *
+     * @return array ['problems' => int, 'worst' => string]
+     */
+    public static function summary(): array {
+        $summary = \cache::make('local_cohortcategoryrole', 'status')->get('summary');
+        if ($summary !== false) {
+            return $summary;
+        }
+
+        return self::store_summary(self::run());
+    }
+
+    /**
+     * Records the summary of a fresh set of results, and returns it.
+     *
+     * @param stdClass[] $results
+     * @return array ['problems' => int, 'worst' => string]
+     */
+    public static function store_summary(array $results): array {
+        $problems = 0;
+        foreach ($results as $result) {
+            if ($result->state === self::WARNING || $result->state === self::ERROR) {
+                $problems++;
+            }
+        }
+
+        $summary = ['problems' => $problems, 'worst' => self::worst_state($results)];
+        \cache::make('local_cohortcategoryrole', 'status')->set('summary', $summary);
+
+        return $summary;
+    }
+
+    /**
+     * Discards the cached summary, so the next page works it out afresh.
+     *
+     * @return void
+     */
+    public static function invalidate_summary(): void {
+        \cache::make('local_cohortcategoryrole', 'status')->delete('summary');
     }
 
     /**
@@ -459,21 +504,19 @@ class diagnostics {
     protected static function check_mapped_roles(): stdClass {
         global $DB;
 
-        $roleids = [];
-        foreach (sync::get_mappings() as $mapping) {
-            $roleids[(int) $mapping->roleid] = true;
-        }
+        $roles = $DB->get_records_sql(
+            "SELECT r.*
+               FROM {role} r
+              WHERE EXISTS (SELECT 1 FROM {" . sync::TABLE . "} m WHERE m.roleid = r.id)
+                AND EXISTS (SELECT 1 FROM {role_capabilities} rc
+                             WHERE rc.roleid = r.id AND rc.capability = :cap AND rc.permission = :allow)
+           ORDER BY r.sortorder",
+            ['cap' => 'enrol/category:synchronised', 'allow' => CAP_ALLOW]
+        );
 
         $items = [];
-        foreach (array_keys($roleids) as $roleid) {
-            $mass = $DB->record_exists('role_capabilities', [
-                'roleid' => $roleid,
-                'capability' => 'enrol/category:synchronised',
-                'permission' => CAP_ALLOW,
-            ]);
-            if ($mass && $role = $DB->get_record('role', ['id' => $roleid])) {
-                $items[] = self::role_item($role);
-            }
+        foreach ($roles as $role) {
+            $items[] = self::role_item($role);
         }
 
         if (!$items) {
@@ -530,17 +573,22 @@ class diagnostics {
      * @return stdClass
      */
     protected static function check_cross_mappings(): stdClass {
-        $mappings = 0;
-        $cohorts = [];
-        foreach (sync::get_mappings() as $mapping) {
-            if (sync::mapping_type((int) $mapping->cohortid, (int) $mapping->categoryid) !== sync::TYPE_CROSS) {
-                continue;
-            }
-            $mappings++;
-            $cohorts[(int) $mapping->cohortid] = true;
-        }
+        global $DB;
 
-        if (!$mappings) {
+        // One query rather than classifying each mapping in turn: on a site with thousands of
+        // mappings the per-mapping lookups cost several queries apiece.
+        $counts = $DB->get_record_sql(
+            "SELECT COUNT(1) AS mappings, COUNT(DISTINCT m.cohortid) AS cohorts
+               FROM {" . sync::TABLE . "} m
+               JOIN {cohort} c ON c.id = m.cohortid
+               JOIN {context} ctx ON ctx.id = c.contextid AND ctx.contextlevel = :catlevel
+               JOIN {course_categories} hc ON hc.id = ctx.instanceid
+               JOIN {course_categories} cc ON cc.id = m.categoryid
+              WHERE NOT " . sync::home_sql(),
+            ['catlevel' => CONTEXT_COURSECAT]
+        );
+
+        if (empty($counts->mappings)) {
             return self::row('crossmappings', self::OK);
         }
 
@@ -549,7 +597,7 @@ class diagnostics {
         return self::row(
             'crossmappings',
             self::INFO,
-            self::str('foundcross', (object) ['mappings' => $mappings, 'cohorts' => count($cohorts)]),
+            self::str('foundcross', (object) ['mappings' => (int) $counts->mappings, 'cohorts' => (int) $counts->cohorts]),
             [],
             null,
             null,
@@ -615,47 +663,62 @@ class diagnostics {
     protected static function check_reachability(): stdClass {
         global $DB;
 
+        // Only mapped categories with a parent can be unreachable. Fetch them with one sample member
+        // each in a single query, rather than a category load and a member query per mapping.
+        $rows = $DB->get_records_sql(
+            "SELECT m.id, m.categoryid, cc.path, MIN(cm.userid) AS memberid
+               FROM {" . sync::TABLE . "} m
+               JOIN {course_categories} cc ON cc.id = m.categoryid AND cc.depth > 1
+               JOIN {cohort_members} cm ON cm.cohortid = m.cohortid
+           GROUP BY m.id, m.categoryid, cc.path"
+        );
+        if (!$rows) {
+            return self::row('reachability', self::OK);
+        }
+
+        // Load every category and member involved in one go.
+        $categoryids = [];
+        $memberids = [];
+        foreach ($rows as $row) {
+            foreach (explode('/', trim($row->path, '/')) as $id) {
+                $categoryids[(int) $id] = true;
+            }
+            $memberids[(int) $row->memberid] = true;
+        }
+        $categories = core_course_category::get_many(array_keys($categoryids));
+        $members = $DB->get_records_list('user', 'id', array_keys($memberids));
+
+        // Whether a member can see a category is the expensive part; never ask the same question twice.
+        $cansee = [];
         $items = [];
 
-        foreach (sync::get_mappings() as $mapping) {
-            if (isset($items[$mapping->categoryid])) {
+        foreach ($rows as $row) {
+            if (isset($items[$row->categoryid]) || !isset($categories[$row->categoryid], $members[$row->memberid])) {
                 continue;
             }
 
-            $category = core_course_category::get($mapping->categoryid, IGNORE_MISSING, true);
-            if (!$category || !$category->parent) {
-                continue;
-            }
-
-            $memberid = $DB->get_field_sql(
-                'SELECT MIN(userid) FROM {cohort_members} WHERE cohortid = :cohortid',
-                ['cohortid' => $mapping->cohortid]
-            );
-            if (!$memberid || !$member = core_user::get_user($memberid)) {
-                continue;
-            }
-
-            $parentid = $category->parent;
-            while ($parentid) {
-                $parent = core_course_category::get($parentid, IGNORE_MISSING, true);
-                if (!$parent) {
-                    break;
+            // Ancestors, nearest first, so the report names the parent that actually blocks the way.
+            $ancestors = array_reverse(array_slice(explode('/', trim($row->path, '/')), 0, -1));
+            foreach ($ancestors as $parentid) {
+                $parentid = (int) $parentid;
+                $key = $row->memberid . ':' . $parentid;
+                if (!isset($cansee[$key])) {
+                    $context = context_coursecat::instance($parentid, IGNORE_MISSING);
+                    $cansee[$key] = !$context || has_capability(self::CAPABILITY, $context, $members[$row->memberid]);
                 }
-                $parentcontext = context_coursecat::instance($parent->id, IGNORE_MISSING);
-                if ($parentcontext && !has_capability(self::CAPABILITY, $parentcontext, $member)) {
-                    $items[$category->id] = [
+                if (!$cansee[$key] && isset($categories[$parentid])) {
+                    $items[$row->categoryid] = [
                         'label' => self::str('foundunreachable', (object) [
-                            'category' => $category->get_formatted_name(),
-                            'parent' => $parent->get_formatted_name(),
+                            'category' => $categories[$row->categoryid]->get_formatted_name(),
+                            'parent' => $categories[$parentid]->get_formatted_name(),
                         ]),
                         'url' => new moodle_url(
                             '/local/cohortcategoryrole/index.php',
-                            ['filtercategory' => $category->id]
+                            ['filtercategory' => $row->categoryid]
                         ),
                     ];
                     break;
                 }
-                $parentid = $parent->parent;
             }
         }
 

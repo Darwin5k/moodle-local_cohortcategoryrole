@@ -147,6 +147,8 @@ class sync {
             ],
         ])->trigger();
 
+        diagnostics::invalidate_summary();
+
         return $mapping;
     }
 
@@ -193,6 +195,8 @@ class sync {
         $event->add_record_snapshot(self::TABLE, $mapping);
         $event->trigger();
 
+        diagnostics::invalidate_summary();
+
         return $deferred;
     }
 
@@ -237,12 +241,17 @@ class sync {
         );
         $actual = self::get_assigned_userids($mapping, (int) $context->id);
 
-        foreach (array_diff($desired, $actual) as $userid) {
+        // Keyed differences rather than array_diff(), which compares values as strings by sorting and
+        // slows sharply on cohorts of tens of thousands; flipping makes each lookup a hash probe.
+        $desiredkeys = array_flip($desired);
+        $actualkeys = array_flip($actual);
+
+        foreach (array_keys(array_diff_key($desiredkeys, $actualkeys)) as $userid) {
             role_assign($mapping->roleid, $userid, $context->id, self::COMPONENT, $mapping->id);
             $result['assigned']++;
         }
 
-        foreach (array_diff($actual, $desired) as $userid) {
+        foreach (array_keys(array_diff_key($actualkeys, $desiredkeys)) as $userid) {
             role_unassign_all([
                 'userid'    => $userid,
                 'roleid'    => $mapping->roleid,
@@ -440,6 +449,38 @@ class sync {
         }
 
         return self::TYPE_CROSS;
+    }
+
+    /**
+     * SQL deciding whether a mapping is Home, for use where a query must filter or count by type.
+     *
+     * Mirrors mapping_type(), which classifies one mapping at a time; this lets the list and the
+     * checks do the same in a single query instead of one lookup per mapping. Expects the aliases
+     * cc (the mapped category) and hc (the category the cohort's context belongs to). Home is the
+     * cohort's own category or anything beneath it, which is a path prefix match.
+     *
+     * @return string
+     */
+    public static function home_sql(): string {
+        global $DB;
+
+        return "(cc.id = hc.id OR cc.path LIKE " . $DB->sql_concat('hc.path', "'/%'") . ")";
+    }
+
+    /**
+     * SQL classifying a mapping row as unmapped, System, Home or Cross.
+     *
+     * Expects the aliases m (the mapping, which may be null in a left join), ctx (the cohort's
+     * context), and the cc and hc aliases home_sql() needs. Context levels are integer constants and
+     * the type names are plugin constants, so nothing is interpolated from input.
+     *
+     * @return string
+     */
+    public static function type_sql(): string {
+        return "CASE WHEN m.id IS NULL THEN 'unmapped'
+                     WHEN ctx.contextlevel = " . (int) CONTEXT_SYSTEM . " THEN '" . self::TYPE_SYSTEM . "'
+                     WHEN " . self::home_sql() . " THEN '" . self::TYPE_HOME . "'
+                     ELSE '" . self::TYPE_CROSS . "' END";
     }
 
     /**

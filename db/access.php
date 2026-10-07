@@ -25,8 +25,10 @@
 defined('MOODLE_INTERNAL') || die();
 
 $capabilities = [
+    // Lets the holder grant roles in course categories, so it carries the same risks core declares
+    // for moodle/role:assign.
     'local/cohortcategoryrole:manage' => [
-        'riskbitmask'  => RISK_SPAM | RISK_PERSONAL,
+        'riskbitmask'  => RISK_SPAM | RISK_PERSONAL | RISK_XSS,
         'captype'      => 'write',
         'contextlevel' => CONTEXT_SYSTEM,
         'archetypes'   => [

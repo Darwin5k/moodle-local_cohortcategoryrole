@@ -233,6 +233,80 @@ final class sync_test extends \advanced_testcase {
     }
 
     /**
+     * The SQL classification used by the list and the checks agrees with mapping_type() row for row.
+     *
+     * The two exist because one classifies a single mapping and the other a whole page in one
+     * query. If they ever disagreed, the list, the filters and the Status count would contradict
+     * each other.
+     *
+     * @return void
+     */
+    public function test_type_sql_agrees_with_mapping_type(): void {
+        global $DB;
+
+        $this->resetAfterTest();
+
+        $sales = $this->getDataGenerator()->create_category();
+        $advanced = $this->getDataGenerator()->create_category(['parent' => $sales->id]);
+        $engineering = $this->getDataGenerator()->create_category();
+        $roleid = $this->getDataGenerator()->create_role();
+
+        $systemcohort = $this->getDataGenerator()->create_cohort(['contextid' => \context_system::instance()->id]);
+        $salescohort = $this->getDataGenerator()->create_cohort([
+            'contextid' => context_coursecat::instance($sales->id)->id,
+        ]);
+
+        sync::create_mapping($systemcohort->id, $sales->id, $roleid);
+        sync::create_mapping($salescohort->id, $sales->id, $roleid);
+        sync::create_mapping($salescohort->id, $advanced->id, $roleid);
+        sync::create_mapping($salescohort->id, $engineering->id, $roleid);
+
+        $rows = $DB->get_records_sql(
+            "SELECT m.id, m.cohortid, m.categoryid, " . sync::type_sql() . " AS maptype
+               FROM {" . sync::TABLE . "} m
+               JOIN {cohort} c ON c.id = m.cohortid
+               JOIN {context} ctx ON ctx.id = c.contextid
+          LEFT JOIN {course_categories} hc ON hc.id = ctx.instanceid AND ctx.contextlevel = :catlevel
+          LEFT JOIN {course_categories} cc ON cc.id = m.categoryid",
+            ['catlevel' => CONTEXT_COURSECAT]
+        );
+
+        $this->assertCount(4, $rows);
+        $seen = [];
+        foreach ($rows as $row) {
+            $this->assertSame(sync::mapping_type((int) $row->cohortid, (int) $row->categoryid), $row->maptype);
+            $seen[$row->maptype] = true;
+        }
+        // All three types were exercised, not just one.
+        $this->assertEqualsCanonicalizing([sync::TYPE_SYSTEM, sync::TYPE_HOME, sync::TYPE_CROSS], array_keys($seen));
+    }
+
+    /**
+     * The cached status summary is discarded whenever a mapping changes.
+     *
+     * The tabs read the summary rather than running every check; a stale one after this plugin's
+     * own change would show the wrong badge.
+     *
+     * @return void
+     */
+    public function test_mapping_changes_invalidate_the_status_summary(): void {
+        $this->resetAfterTest();
+
+        $cache = \cache::make('local_cohortcategoryrole', 'status');
+        \local_cohortcategoryrole\local\diagnostics::summary();
+        $this->assertNotFalse($cache->get('summary'));
+
+        $category = $this->getDataGenerator()->create_category();
+        $cohort = $this->getDataGenerator()->create_cohort();
+        $mapping = sync::create_mapping($cohort->id, $category->id, $this->getDataGenerator()->create_role());
+        $this->assertFalse($cache->get('summary'));
+
+        \local_cohortcategoryrole\local\diagnostics::summary();
+        sync::delete_mapping((int) $mapping->id);
+        $this->assertFalse($cache->get('summary'));
+    }
+
+    /**
      * A mapping's type follows the cohort when Moodle moves it after its category is deleted.
      *
      * Deleting a category moves its cohorts to the parent context with no event, so the type must

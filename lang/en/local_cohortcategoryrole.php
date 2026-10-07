@@ -39,6 +39,7 @@ $string['automap_desc'] = 'When a cohort is created inside a course category, im
 $string['automaprole'] = 'Role for automatic mappings';
 $string['automaprole_desc'] = 'The role assigned by automatically created mappings. Choose the least powerful role that grants what the audience needs - usually one allowing only moodle/category:viewcourselist.';
 $string['backtostatus'] = 'Back to Status';
+$string['cachedef_status'] = 'Summary of the configuration checks, shown as a badge on the plugin tabs';
 $string['category'] = 'Course category';
 $string['category_help'] = 'Members of the cohort are assigned the selected role in this category context, which makes the category and its courses visible to them.
 

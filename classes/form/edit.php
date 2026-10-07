@@ -29,7 +29,6 @@ defined('MOODLE_INTERNAL') || die();
 global $CFG;
 require_once($CFG->libdir . '/formslib.php');
 
-use context;
 use context_coursecat;
 use core_course_category;
 use local_cohortcategoryrole\local\sync;
@@ -51,12 +50,14 @@ class edit extends moodleform {
     protected function definition(): void {
         $mform = $this->_form;
 
-        // Autocomplete rather than select: sites using this plugin tend to have many cohorts.
+        // Core's cohort selector searches over AJAX, so the page never carries the site's whole cohort
+        // list - which on a site with thousands of cohorts would be a very large page. It also only
+        // offers cohorts the current user may see.
         $mform->addElement(
-            'autocomplete',
+            'cohort',
             'cohortid',
             get_string('cohort', 'local_cohortcategoryrole'),
-            self::get_cohort_options()
+            ['includes' => 'all', 'contextid' => \context_system::instance()->id]
         );
         $mform->addRule('cohortid', null, 'required', null, 'client');
 
@@ -88,7 +89,23 @@ class edit extends moodleform {
      * @return array Errors keyed by element name.
      */
     public function validation($data, $files): array {
+        global $DB;
+
         $errors = parent::validation($data, $files);
+
+        // The form only offers real choices, but a crafted post need not use the form.
+        if (empty($data['cohortid']) || !$DB->record_exists('cohort', ['id' => $data['cohortid']])) {
+            $errors['cohortid'] = get_string('required');
+        }
+        if (empty($data['categoryid']) || !$DB->record_exists('course_categories', ['id' => $data['categoryid']])) {
+            $errors['categoryid'] = get_string('required');
+        }
+        if (empty($data['roleid']) || !$DB->record_exists('role', ['id' => $data['roleid']])) {
+            $errors['roleid'] = get_string('required');
+        }
+        if ($errors) {
+            return $errors;
+        }
 
         $existing = sync::get_mappings([
             'cohortid'   => $data['cohortid'],
@@ -105,26 +122,5 @@ class edit extends moodleform {
         }
 
         return $errors;
-    }
-
-    /**
-     * Returns every cohort on the site, labelled with its context when it is not site wide.
-     *
-     * @return array Cohort id => label.
-     */
-    protected static function get_cohort_options(): array {
-        global $DB;
-
-        $options = [];
-        foreach ($DB->get_records('cohort', null, 'name ASC') as $cohort) {
-            $label = format_string($cohort->name);
-            $cohortcontext = context::instance_by_id($cohort->contextid, IGNORE_MISSING);
-            if ($cohortcontext && $cohortcontext->contextlevel != CONTEXT_SYSTEM) {
-                $label .= ' (' . $cohortcontext->get_context_name(false) . ')';
-            }
-            $options[$cohort->id] = $label;
-        }
-
-        return $options;
     }
 }

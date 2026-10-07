@@ -121,6 +121,10 @@ final class strings_test extends \advanced_testcase {
             if (str_starts_with($identifier, 'check') || str_starts_with($identifier, 'state')) {
                 continue;
             }
+            // Cache definition names are looked up by core from db/caches.php.
+            if (str_starts_with($identifier, 'cachedef_')) {
+                continue;
+            }
             // Help strings are requested by the name of the string they document.
             if (str_ends_with($identifier, '_help') || str_ends_with($identifier, '_desc')) {
                 continue;

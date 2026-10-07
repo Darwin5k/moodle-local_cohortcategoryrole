@@ -84,13 +84,15 @@ if ($delete) {
     die();
 }
 
-$checks = diagnostics::run();
-$problems = 0;
-foreach ($checks as $check) {
-    if ($check->state === diagnostics::WARNING || $check->state === diagnostics::ERROR) {
-        $problems++;
-    }
+// Running every check costs a query or more per mapping, so only the Status tab runs them. The
+// other tabs read the cached summary for the badge and notice.
+if ($tab === 'status') {
+    $checks = diagnostics::run();
+    $summary = diagnostics::store_summary($checks);
+} else {
+    $summary = diagnostics::summary();
 }
+$problems = $summary['problems'];
 
 // The status tab carries a count, so a problem is visible from the mappings tab without leaving it.
 $statuslabel = get_string('tabstatus', 'local_cohortcategoryrole');
@@ -339,16 +341,12 @@ if ($filterrole) {
     $params['filterrole'] = $filterrole;
 }
 
-// The mapping type in SQL, mirroring sync::mapping_type() so the list can filter on it. Home is the
-// cohort's own category or anything beneath it, which is a path prefix match. The context levels are
-// integer constants, interpolated rather than bound so the same fragment can appear more than once.
+// The mapping type in SQL, shared with the checks through sync so the two cannot disagree. Context
+// levels are integer constants, interpolated rather than bound so a fragment can appear twice.
 $syslevel = (int) CONTEXT_SYSTEM;
 $catlevel = (int) CONTEXT_COURSECAT;
-$ishome = "(cc.id = hc.id OR cc.path LIKE " . $DB->sql_concat('hc.path', "'/%'") . ")";
-$typesql = "CASE WHEN m.id IS NULL THEN 'unmapped'
-                 WHEN ctx.contextlevel = $syslevel THEN '" . sync::TYPE_SYSTEM . "'
-                 WHEN $ishome THEN '" . sync::TYPE_HOME . "'
-                 ELSE '" . sync::TYPE_CROSS . "' END";
+$ishome = sync::home_sql();
+$typesql = sync::type_sql();
 
 if ($filtertype === sync::TYPE_SYSTEM) {
     $where[] = "m.id IS NOT NULL AND ctx.contextlevel = $syslevel";
@@ -403,16 +401,32 @@ if ($filtertype !== '') {
 }
 $pageurl = new moodle_url($baseurl, $filterparams);
 
-// Counts come from two grouped queries rather than two per row: a site using this plugin is
-// expected to have many cohorts, and per-row counting would put hundreds of queries on the page.
+// Counts come from two grouped queries rather than two per row, and cover only the rows on this
+// page: grouping the whole of cohort_members on every view would grow with the site, not the page.
 // Both are grouped by a unique column, so get_records_sql() cannot collapse rows here.
-$membercounts = $DB->get_records_sql(
-    'SELECT cohortid, COUNT(1) AS total FROM {cohort_members} GROUP BY cohortid'
-);
-$assignmentcounts = $DB->get_records_sql(
-    'SELECT itemid, COUNT(1) AS total FROM {role_assignments} WHERE component = :component GROUP BY itemid',
-    ['component' => sync::COMPONENT]
-);
+$membercounts = [];
+$assignmentcounts = [];
+$pagecohortids = array_unique(array_map('intval', array_column($rows, 'cohortid')));
+$pagemappingids = array_filter(array_map('intval', array_column($rows, 'mappingid')));
+
+if ($pagecohortids) {
+    [$insql, $inparams] = $DB->get_in_or_equal($pagecohortids, SQL_PARAMS_NAMED, 'pc');
+    $membercounts = $DB->get_records_sql(
+        "SELECT cohortid, COUNT(1) AS total FROM {cohort_members} WHERE cohortid $insql GROUP BY cohortid",
+        $inparams
+    );
+}
+if ($pagemappingids) {
+    [$insql, $inparams] = $DB->get_in_or_equal($pagemappingids, SQL_PARAMS_NAMED, 'pm');
+    $inparams['component'] = sync::COMPONENT;
+    $assignmentcounts = $DB->get_records_sql(
+        "SELECT itemid, COUNT(1) AS total
+           FROM {role_assignments}
+          WHERE component = :component AND itemid $insql
+       GROUP BY itemid",
+        $inparams
+    );
+}
 
 $displaycategoryids = [];
 foreach ($rows as $row) {
@@ -679,7 +693,7 @@ foreach ($rows as $row) {
 }
 
 // Surface the worst finding here too, so a problem is not hidden behind a tab nobody clicked.
-$worst = diagnostics::worst_state($checks);
+$worst = $summary['worst'];
 if ($worst === diagnostics::ERROR || $worst === diagnostics::WARNING) {
     echo $OUTPUT->notification(
         get_string('statussummary', 'local_cohortcategoryrole', $problems),
